@@ -1,14 +1,48 @@
 // Characters drawn from rectangles in "local" coordinates: x grows in the direction the sprite
 // faces, y is measured up from the feet (negative = up). That makes flipping and posing cheap.
-import { PAL } from './config.js';
+//
+// 32-bit look: a pose is collected first, then drawn in two passes: a 1-pixel dark outline
+// around the whole silhouette, then each part with a top highlight and a bottom/right shadow.
+import { DETAIL, PAL, shade } from './config.js';
 import { ATTACKS } from './player.js';
 
+const OUTLINE = '#0b0612';
+const PX = 1 / DETAIL; // one screen pixel, in world units
+const snapPx = (v) => Math.round(v * DETAIL) / DETAIL;
+
 function painter(ctx, cx, footY, facing, { scale = 1, flash = false } = {}) {
-  return (lx, ly, w, h, color) => {
-    ctx.fillStyle = flash ? PAL.white : color;
+  const rects = [];
+  const r = (lx, ly, w, h, color) => {
     const x = facing >= 0 ? cx + lx * scale : cx - (lx + w) * scale;
-    ctx.fillRect(Math.round(x), Math.round(footY + ly * scale), Math.ceil(w * scale), Math.ceil(h * scale));
+    rects.push([snapPx(x), snapPx(footY + ly * scale), w * scale, h * scale, color]);
   };
+  r.flush = () => {
+    ctx.fillStyle = OUTLINE;
+    for (const [x, y, w, h] of rects) ctx.fillRect(x - PX, y - PX, w + 2 * PX, h + 2 * PX);
+    for (const [x, y, w, h, color] of rects) {
+      if (flash) {
+        ctx.fillStyle = PAL.white;
+        ctx.fillRect(x, y, w, h);
+        continue;
+      }
+      ctx.fillStyle = color;
+      ctx.fillRect(x, y, w, h);
+      if (h >= 1.5) {
+        ctx.fillStyle = shade(color, 0.3);
+        ctx.fillRect(x, y, w, PX);
+      }
+      if (h >= 2) {
+        ctx.fillStyle = shade(color, -0.35);
+        ctx.fillRect(x, y + h - PX, w, PX);
+      }
+      if (w >= 2.5 && h >= 2) {
+        ctx.fillStyle = shade(color, -0.2);
+        ctx.fillRect(x + w - PX, y + PX, PX, h - 2 * PX);
+      }
+    }
+    rects.length = 0;
+  };
+  return r;
 }
 
 function legs(r, { phase = 0, pose = 'stand', pants = PAL.jean, boots = PAL.black }) {
@@ -136,6 +170,7 @@ export function drawHero(ctx, p, cx, fy, t) {
     arm(0 + swing, -16, 3, 7);
     r(0 + swing + lean, -10, 3, 2, PAL.skin);
   }
+  r.flush();
 }
 
 // ------------------------------------------------------------------- Military
@@ -164,6 +199,7 @@ export function drawSoldier(ctx, e, cx, fy, t, { disguise = false } = {}) {
     r(-1, -16, 3, 7, PAL.olive);
     r(-2, -13, 9, 2, PAL.ink);
   }
+  r.flush();
 }
 
 // ------------------------------------------------------------------- Infected
@@ -185,6 +221,7 @@ export function drawInfected(ctx, e, cx, fy) {
   const reach = e.state === 'lunge' ? 4 : 0;
   r(2, -14 + raise, 7 + reach, 2, PAL.zombie);
   r(1, -11 + raise, 6 + reach, 2, PAL.zombieD);
+  r.flush();
 }
 
 // ------------------------------------------------------------------- Hunters
@@ -225,6 +262,7 @@ function hunterBody(r, e, { glow }) {
 export function drawHunter(ctx, e, cx, fy, t) {
   const r = painter(ctx, cx, fy, e.facing, { flash: e.flash > 0 });
   hunterBody(r, e, { glow: false });
+  r.flush();
   if (e.state === 'stunned') drawStunStars(ctx, cx, fy - 34, t);
 }
 
@@ -232,6 +270,7 @@ export function drawBoss(ctx, e, cx, fy, t) {
   const pulse = e.phase === 3 && Math.floor(t / 6) % 2 === 0;
   const r = painter(ctx, cx, fy, e.facing, { scale: 1.4, flash: e.flash > 0 || pulse });
   hunterBody(r, e, { glow: true });
+  r.flush();
   if (e.state === 'stunned') drawStunStars(ctx, cx, fy - 52, t);
 }
 
@@ -262,6 +301,7 @@ export function drawHeli(ctx, e, cx, fy, t) {
   r(-blade / 2, -18, blade, 1, PAL.grayL);
   r(-1, -17, 2, 2, PAL.ink);
   if (Math.floor(t / 20) % 2) r(-12, -15, 2, 2, PAL.red);
+  r.flush();
 }
 
 // ------------------------------------------------------------------- Projectiles

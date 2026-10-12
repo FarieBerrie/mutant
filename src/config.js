@@ -1,18 +1,23 @@
 // Names shown in the game. Change these in one place if you publish it under another title.
 export const GAME = {
   title: 'MUTANT',
-  subtitle: '8-BIT',
+  subtitle: '32-BIT',
   hero: 'MAXIMUS',
 };
 
-// NES-like resolution: 16×14 tiles of 16 px.
-export const VIEW_W = 256;
+// 32-bit-era widescreen: a 400×224 view of the world (25×14 tiles of 16 px), rendered at
+// DETAIL× so sprites, scrolling and effects get half-pixel precision.
+export const VIEW_W = 400;
 export const VIEW_H = 224;
+export const DETAIL = 2;
 export const TILE = 16;
 export const ROWS = 14;
 export const GROUND_ROW = 12; // rows 12–13 are the street
 
-// Palette in the spirit of the NES (2C02) colours.
+/** Snap a world coordinate to the render grid (half pixels at DETAIL 2). */
+export const snap = (v) => Math.round(v * DETAIL) / DETAIL;
+
+// Base colours. The 32-bit renderer shades these automatically (see shade()).
 export const PAL = {
   black: '#000000',
   ink: '#181818',
@@ -75,3 +80,28 @@ export const PHYS = {
 
 export const PLAYER_MAX_HP = 100;
 export const MASS_MAX = 100;
+
+// ---------------------------------------------------------------- colour helpers
+
+const shadeCache = new Map();
+
+/** Lighten (amount > 0) or darken (amount < 0) a #rrggbb colour. Cached. */
+export function shade(hex, amount) {
+  const key = `${hex}|${amount}`;
+  let out = shadeCache.get(key);
+  if (out) return out;
+  const n = parseInt(hex.slice(1), 16);
+  const mix = (c) => Math.round(amount >= 0 ? c + (255 - c) * amount : c * (1 + amount));
+  const r = mix((n >> 16) & 255);
+  const g = mix((n >> 8) & 255);
+  const b = mix(n & 255);
+  out = `#${((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1)}`;
+  shadeCache.set(key, out);
+  return out;
+}
+
+/** #rrggbb + alpha → rgba() string. */
+export function alpha(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}

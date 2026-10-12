@@ -12,10 +12,11 @@ export const DISTRICTS = [
   { name: 'INFECTED ZONE', cols: 60, theme: 'infected', heights: [4, 8], gaps: [3, 6], soldiers: 2, infected: 8, hunters: 1, cars: 0.4, ambient: 5 },
   { name: 'MILITARY BASE', cols: 56, theme: 'military', heights: [2, 5], gaps: [4, 8], soldiers: 10, infected: 2, hunters: 1, fences: true },
   { name: 'THE HIVE', cols: 50, theme: 'hive', heights: [3, 8], gaps: [3, 6], soldiers: 0, infected: 6, hunters: 2, hive: true, ambient: 6 },
-  { name: 'SUPREME HUNTER', cols: 26, theme: 'arena', arena: true },
+  { name: 'SUPREME HUNTER', cols: 34, theme: 'arena', arena: true },
 ];
 
 const BUILDING_STYLES = ['brick', 'concrete', 'tan', 'glass'];
+const NEON = ['#ff2050', '#3cbcfc', '#f8b800', '#58d854', '#e040fb'];
 
 export function tileAt(level, c, r) {
   if (c < 0 || c >= level.cols) return T.WALL; // the edges of the map are walls
@@ -60,6 +61,10 @@ export function buildLevel(seed = 1985) {
       for (let r = top; r < GROUND_ROW; r++) setTile(level, c, r, style === 'hive' ? T.HIVE : r === top ? T.ROOF : T.WALL);
     }
     level.buildings.push({ c0, c1: c0 + w - 1, top, style });
+    // Neon signs hang on some facades.
+    if (style !== 'hive' && h >= 4 && rng.chance(0.4)) {
+      level.decor.push({ kind: 'neon', x: (c0 + rng.int(0, Math.max(0, w - 3))) * TILE + 4, y: (top + rng.int(1, h - 3)) * TILE + 4, color: rng.pick(NEON), w: rng.int(22, 34) });
+    }
     // Rooftop clutter: water towers and antennas (decoration only).
     if (style !== 'hive' && w >= 5 && rng.chance(0.45)) {
       level.decor.push({ kind: rng.chance(0.6) ? 'tower' : 'antenna', x: (c0 + rng.int(1, w - 3)) * TILE, y: top * TILE });
@@ -135,6 +140,16 @@ export function buildLevel(seed = 1985) {
     place('hunter', d.hunters || 0, { street: true });
 
     start = end;
+  }
+
+  // Street lamps along open sidewalks (not in the hive or the arena).
+  for (const d of level.districts) {
+    if (d.theme === 'hive' || d.theme === 'arena') continue;
+    for (let c = d.x0 / TILE + 3; c < d.x1 / TILE - 2; c += 7) {
+      if (surfaceRow(level, c) === GROUND_ROW && surfaceRow(level, c + 1) === GROUND_ROW) {
+        level.decor.push({ kind: 'lamp', x: c * TILE + 8, y: GROUND_ROW * TILE });
+      }
+    }
   }
 
   level.spawns.sort((a, b) => a.x - b.x);

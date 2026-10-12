@@ -85,6 +85,40 @@ export function createAudio() {
       noiseBuffer = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
       const data = noiseBuffer.getChannelData(0);
       for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+
+      // 32-bit sheen: a filtered echo and a synthetic reverb, fed by send levels.
+      const fx = ctx.createGain();
+      const delay = ctx.createDelay(1);
+      delay.delayTime.value = 0.27;
+      const feedback = ctx.createGain();
+      feedback.gain.value = 0.3;
+      const tone = ctx.createBiquadFilter();
+      tone.type = 'lowpass';
+      tone.frequency.value = 2400;
+      const echoOut = ctx.createGain();
+      echoOut.gain.value = 0.3;
+      fx.connect(delay);
+      delay.connect(tone).connect(feedback).connect(delay);
+      tone.connect(echoOut).connect(master);
+
+      const reverb = ctx.createConvolver();
+      const len = Math.floor(ctx.sampleRate * 1.8);
+      const impulse = ctx.createBuffer(2, len, ctx.sampleRate);
+      for (let ch = 0; ch < 2; ch++) {
+        const d = impulse.getChannelData(ch);
+        for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len) ** 2.6;
+      }
+      reverb.buffer = impulse;
+      const reverbOut = ctx.createGain();
+      reverbOut.gain.value = 0.28;
+      fx.connect(reverb).connect(reverbOut).connect(master);
+
+      const musicSend = ctx.createGain();
+      musicSend.gain.value = 0.45;
+      musicBus.connect(musicSend).connect(fx);
+      const sfxSend = ctx.createGain();
+      sfxSend.gain.value = 0.3;
+      sfxBus.connect(sfxSend).connect(fx);
     }
     if (ctx.state === 'suspended') ctx.resume();
     return true;
@@ -188,58 +222,96 @@ export function createAudio() {
     pause: () => arp(['E5', 'A4'], 0.06),
   };
 
-  function scheduleStep(trk, i, time) {
-    const eighth = 60 / trk.bpm / 2;
-    const bass = trk.bass[i % trk.bass.length];
-    if (bass && bass !== '.') {
-      const f = noteFreq(bass);
-      const osc = ctx.createOscillator();
-      const g = ctx.createGain();
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(f, time);
-      g.gain.setValueAtTime(0.22, time);
-      g.gain.setValueAtTime(0.0001, time + eighth * 0.85);
-      osc.connect(g).connect(musicBus);
-      osc.start(time);
-      osc.stop(time + eighth);
+  // One voice through a lowpass filter with an attack/decay envelope.
+  function voice({ type, freq, detune = 0, time, dur, vol, cutoff = 3000, cutoffEnd = cutoff, attack = 0.005, vibrato = 0 }) {
+    const osc = ctx.createOscillator();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, time);
+    osc.detune.setValueAtTime(detune, time);
+    if (vibrato) {
+      const lfo = ctx.createOscillator();
+      const depth = ctx.createGain();
+      lfo.frequency.value = 5.5;
+      depth.gain.setValueAtTime(0, time);
+      depth.gain.linearRampToValueAtTime(vibrato, time + Math.min(dur, 0.25));
+      lfo.connect(depth).connect(osc.detune);
+      lfo.start(time);
+      lfo.stop(time + dur + 0.05);
     }
-    const lead = trk.lead[i % trk.lead.length];
-    if (lead && lead !== '.') {
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(cutoff, time);
+    filter.frequency.exponentialRampToValueAtTime(Math.max(80, cutoffEnd), time + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, time);
+    g.gain.exponentialRampToValueAtTime(vol, time + attack);
+    g.gain.exponentialRampToValueAtTime(0.0001, time + dur);
+    osc.connect(filter).connect(g).connect(musicBus);
+    osc.start(time);
+    osc.stop(time + dur + 0.02);
+  }
+
+  function drumHit(kind, time) {
+    if (kind === 'k') {
       const osc = ctx.createOscillator();
       const g = ctx.createGain();
-      osc.type = 'square';
-      osc.frequency.setValueAtTime(noteFreq(lead), time);
-      g.gain.setValueAtTime(trk.leadVol, time);
-      g.gain.exponentialRampToValueAtTime(0.001, time + eighth * 1.8);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(170, time);
+      osc.frequency.exponentialRampToValueAtTime(42, time + 0.12);
+      g.gain.setValueAtTime(0.55, time);
+      g.gain.exponentialRampToValueAtTime(0.001, time + 0.22);
       osc.connect(g).connect(musicBus);
       osc.start(time);
-      osc.stop(time + eighth * 2);
+      osc.stop(time + 0.23);
     }
-    const drum = trk.drums[i % trk.drums.length];
-    if (drum === 'k') {
-      const osc = ctx.createOscillator();
-      const g = ctx.createGain();
-      osc.frequency.setValueAtTime(150, time);
-      osc.frequency.exponentialRampToValueAtTime(40, time + 0.1);
-      g.gain.setValueAtTime(0.3, time);
-      g.gain.exponentialRampToValueAtTime(0.001, time + 0.12);
-      osc.connect(g).connect(musicBus);
-      osc.start(time);
-      osc.stop(time + 0.13);
-    } else if (drum === 's' || drum === 'h') {
+    if (kind === 's' || kind === 'h' || kind === 'k') {
       const src = ctx.createBufferSource();
       src.buffer = noiseBuffer;
       const filter = ctx.createBiquadFilter();
-      filter.type = drum === 'h' ? 'highpass' : 'bandpass';
-      filter.frequency.value = drum === 'h' ? 7000 : 1800;
+      filter.type = kind === 's' ? 'bandpass' : 'highpass';
+      filter.frequency.value = kind === 'h' ? 8000 : kind === 'k' ? 3000 : 1600;
       const g = ctx.createGain();
-      const len = drum === 'h' ? 0.03 : 0.1;
-      g.gain.setValueAtTime(drum === 'h' ? 0.06 : 0.16, time);
+      const len = kind === 'h' ? 0.04 : kind === 'k' ? 0.01 : 0.16;
+      g.gain.setValueAtTime(kind === 'h' ? 0.07 : kind === 'k' ? 0.12 : 0.26, time);
       g.gain.exponentialRampToValueAtTime(0.001, time + len);
       src.connect(filter).connect(g).connect(musicBus);
       src.start(time, Math.random() * 0.5);
       src.stop(time + len + 0.01);
     }
+    if (kind === 's') voice({ type: 'triangle', freq: 190, time, dur: 0.1, vol: 0.12, cutoff: 1200 });
+  }
+
+  function scheduleStep(trk, i, time) {
+    const eighth = 60 / trk.bpm / 2;
+
+    // Bass: filtered sawtooth over a triangle sub
+    const bass = trk.bass[i % trk.bass.length];
+    if (bass && bass !== '.') {
+      const f = noteFreq(bass);
+      voice({ type: 'sawtooth', freq: f, time, dur: eighth * 0.95, vol: 0.13, cutoff: 900, cutoffEnd: 220 });
+      voice({ type: 'triangle', freq: f / 2, time, dur: eighth * 0.95, vol: 0.16, cutoff: 400 });
+    }
+
+    // Pad: a soft minor chord on the first bass note of every bar
+    if (i % 8 === 0 && bass && bass !== '.') {
+      const root = noteFreq(bass) * 4;
+      for (const [semis, detune] of [[0, -6], [3, 5], [7, -4], [12, 7]]) {
+        voice({ type: 'sawtooth', freq: root * 2 ** (semis / 12), detune, time, dur: eighth * 8, vol: 0.018, cutoff: 1400, cutoffEnd: 600, attack: eighth * 2 });
+      }
+    }
+
+    // Lead: two detuned saws with vibrato
+    const lead = trk.lead[i % trk.lead.length];
+    if (lead && lead !== '.') {
+      const f = noteFreq(lead);
+      for (const detune of [-8, 8]) {
+        voice({ type: 'sawtooth', freq: f, detune, time, dur: eighth * 1.9, vol: trk.leadVol * 0.75, cutoff: 3600, cutoffEnd: 1200, attack: 0.01, vibrato: 12 });
+      }
+      voice({ type: 'square', freq: f / 2, time, dur: eighth * 1.5, vol: trk.leadVol * 0.25, cutoff: 1800 });
+    }
+
+    const drum = trk.drums[i % trk.drums.length];
+    if (drum && drum !== '.') drumHit(drum, time);
   }
 
   function pump() {

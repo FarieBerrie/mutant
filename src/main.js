@@ -1,18 +1,19 @@
 import { createAudio } from './audio.js';
 import { createBot } from './bot.js';
-import { GAME, PAL, VIEW_H, VIEW_W } from './config.js';
+import { DETAIL, GAME, PAL, VIEW_H, VIEW_W } from './config.js';
 import { drawText } from './font.js';
 import { Game } from './game.js';
 import { createInput } from './input.js';
-import { dim, drawLogo, drawMenu, drawPanel, renderGame } from './render.js';
+import { CX, dim, drawLogo, drawMenu, drawPanel, renderGame } from './render.js';
 
 const STEP = 1000 / 60;
 const HIGH_SCORE_KEY = 'mutant8.highscore';
 
 const canvas = document.getElementById('screen');
 const ctx = canvas.getContext('2d');
-canvas.width = VIEW_W;
-canvas.height = VIEW_H;
+// The canvas has DETAIL× the pixels of the world view; draw() scales world units onto it.
+canvas.width = VIEW_W * DETAIL;
+canvas.height = VIEW_H * DETAIL;
 ctx.imageSmoothingEnabled = false;
 
 const audio = createAudio();
@@ -169,26 +170,26 @@ const HOWTO = [
 function drawTitle() {
   renderGame(ctx, demo, t, { hud: false });
   dim(ctx, 0.62);
-  drawLogo(ctx, 30, t);
-  drawMenu(ctx, titleItems(), menuIndex, 112, t);
-  drawText(ctx, `HI-SCORE ${String(highScore).padStart(7, '0')}`, 128, 162, PAL.yellow, { align: 'center', shadow: PAL.black });
-  drawText(ctx, `STARRING ${GAME.hero}`, 128, 196, PAL.grayL, { align: 'center', shadow: PAL.black });
-  drawText(ctx, 'ENTER / START / TAP TO PLAY', 128, 208, Math.floor(t / 30) % 2 ? PAL.grayL : PAL.gray, { align: 'center' });
+  drawLogo(ctx, 24, t);
+  drawMenu(ctx, titleItems(), menuIndex, 114, t);
+  drawText(ctx, `HI-SCORE ${String(highScore).padStart(7, '0')}`, CX, 162, PAL.yellow, { align: 'center', shadow: PAL.black });
+  drawText(ctx, `STARRING ${GAME.hero}`, CX, 196, PAL.grayL, { align: 'center', shadow: PAL.black });
+  drawText(ctx, 'ENTER / START / TAP TO PLAY', CX, 208, Math.floor(t / 30) % 2 ? PAL.grayL : PAL.gray, { align: 'center' });
 }
 
 function drawHowto() {
   renderGame(ctx, demo, t, { hud: false });
   dim(ctx, 0.8);
   drawPanel(ctx, 6, 6, VIEW_W - 12, VIEW_H - 12);
-  drawText(ctx, 'HOW TO PLAY', 128, 14, PAL.redL, { align: 'center', scale: 2 });
+  drawText(ctx, 'HOW TO PLAY', CX, 14, PAL.redL, { align: 'center', scale: 2 });
   HOWTO.forEach(([k, v], i) => {
-    drawText(ctx, k, 14, 36 + i * 11, PAL.yellow);
-    drawText(ctx, v, 76, 36 + i * 11, PAL.white);
+    drawText(ctx, k, CX - 130, 36 + i * 11, PAL.yellow);
+    drawText(ctx, v, CX - 68, 36 + i * 11, PAL.white);
   });
-  drawText(ctx, 'CONSUME A SOLDIER UNSEEN TO DISGUISE.', 128, 172, PAL.greenL, { align: 'center' });
-  drawText(ctx, 'SUPERHUMAN MOVES NEAR SOLDIERS', 128, 182, PAL.grayL, { align: 'center' });
-  drawText(ctx, 'WILL BLOW YOUR COVER.', 128, 192, PAL.grayL, { align: 'center' });
-  drawText(ctx, 'GAMEPAD AND TOUCH WORK TOO', 128, 206, PAL.gray, { align: 'center' });
+  drawText(ctx, 'CONSUME A SOLDIER UNSEEN TO DISGUISE.', CX, 172, PAL.greenL, { align: 'center' });
+  drawText(ctx, 'SUPERHUMAN MOVES NEAR SOLDIERS', CX, 182, PAL.grayL, { align: 'center' });
+  drawText(ctx, 'WILL BLOW YOUR COVER.', CX, 192, PAL.grayL, { align: 'center' });
+  drawText(ctx, 'GAMEPAD AND TOUCH WORK TOO', CX, 206, PAL.gray, { align: 'center' });
 }
 
 function drawPlay() {
@@ -196,9 +197,9 @@ function drawPlay() {
   if (game.mode === 'dead') {
     dim(ctx, Math.min(0.7, game.modeT / 60));
     if (game.modeT > 30) {
-      drawText(ctx, 'YOU DIED', 128, 80, PAL.viralL, { align: 'center', scale: 3, shadow: PAL.black });
-      drawText(ctx, `DEATHS ${game.deaths + 1}`, 128, 116, PAL.grayL, { align: 'center' });
-      if (game.modeT > 70 && Math.floor(t / 20) % 2) drawText(ctx, 'PRESS START TO RETRY', 128, 140, PAL.white, { align: 'center' });
+      drawText(ctx, 'YOU DIED', CX, 80, PAL.viralL, { align: 'center', scale: 3, shadow: PAL.black });
+      drawText(ctx, `DEATHS ${game.deaths + 1}`, CX, 116, PAL.grayL, { align: 'center' });
+      if (game.modeT > 70 && Math.floor(t / 20) % 2) drawText(ctx, 'PRESS START TO RETRY', CX, 140, PAL.white, { align: 'center' });
     }
   } else if (game.mode === 'victory') {
     dim(ctx, Math.min(0.75, game.modeT / 80));
@@ -206,16 +207,16 @@ function drawPlay() {
   }
   if (screen === 'pause') {
     dim(ctx, 0.6);
-    drawPanel(ctx, 48, 60, 160, 92);
-    drawText(ctx, 'PAUSED', 128, 70, PAL.white, { align: 'center', scale: 2 });
+    drawPanel(ctx, CX - 80, 60, 160, 92);
+    drawText(ctx, 'PAUSED', CX, 70, PAL.white, { align: 'center', scale: 2 });
     drawMenu(ctx, pauseItems, menuIndex, 98, t);
-    drawText(ctx, `SOUND ${audio.muted ? 'OFF' : 'ON'} (M)`, 128, 138, PAL.gray, { align: 'center' });
+    drawText(ctx, `SOUND ${audio.muted ? 'OFF' : 'ON'} (M)`, CX, 138, PAL.gray, { align: 'center' });
   }
 }
 
 function drawVictory() {
-  drawPanel(ctx, 20, 24, VIEW_W - 40, 176);
-  drawText(ctx, 'THE HIVE FALLS', 128, 36, PAL.yellow, { align: 'center', scale: 2, shadow: PAL.redD });
+  drawPanel(ctx, CX - 130, 24, 260, 176);
+  drawText(ctx, 'THE HIVE FALLS', CX, 36, PAL.yellow, { align: 'center', scale: 2, shadow: PAL.redD });
   const secs = Math.floor(game.frame / 60);
   const rows = [
     ['TIME', `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`],
@@ -226,14 +227,15 @@ function drawVictory() {
     ['SCORE', game.score],
   ];
   rows.forEach(([k, v], i) => {
-    drawText(ctx, k, 40, 64 + i * 13, PAL.grayL);
-    drawText(ctx, String(v), 216, 64 + i * 13, PAL.white, { align: 'right' });
+    drawText(ctx, k, CX - 110, 64 + i * 13, PAL.grayL);
+    drawText(ctx, String(v), CX + 110, 64 + i * 13, PAL.white, { align: 'right' });
   });
-  drawText(ctx, newHigh ? 'NEW HIGH SCORE!' : `HI-SCORE ${highScore}`, 128, 150, newHigh && Math.floor(t / 10) % 2 ? PAL.white : PAL.yellow, { align: 'center' });
-  if (game.modeT > 150 && Math.floor(t / 20) % 2) drawText(ctx, 'PRESS START', 128, 180, PAL.white, { align: 'center' });
+  drawText(ctx, newHigh ? 'NEW HIGH SCORE!' : `HI-SCORE ${highScore}`, CX, 150, newHigh && Math.floor(t / 10) % 2 ? PAL.white : PAL.yellow, { align: 'center' });
+  if (game.modeT > 150 && Math.floor(t / 20) % 2) drawText(ctx, 'PRESS START', CX, 180, PAL.white, { align: 'center' });
 }
 
 function draw() {
+  ctx.setTransform(DETAIL, 0, 0, DETAIL, 0, 0);
   if (screen === 'title') drawTitle();
   else if (screen === 'howto') drawHowto();
   else drawPlay();
@@ -244,10 +246,11 @@ function draw() {
 function resize() {
   const touch = document.body.classList.contains('touch');
   const availH = window.innerHeight - (touch ? Math.min(220, window.innerHeight * 0.38) : 0);
-  let scale = Math.min(window.innerWidth / VIEW_W, availH / VIEW_H);
-  if (scale >= 1) scale = Math.floor(scale); // whole-pixel scaling keeps pixels square
-  canvas.style.width = `${Math.floor(VIEW_W * scale)}px`;
-  canvas.style.height = `${Math.floor(VIEW_H * scale)}px`;
+  // Scale in canvas pixels; whole multiples when there is room, so pixels stay square.
+  let scale = Math.min(window.innerWidth / canvas.width, availH / canvas.height);
+  if (scale >= 2) scale = Math.floor(scale);
+  canvas.style.width = `${Math.floor(canvas.width * scale)}px`;
+  canvas.style.height = `${Math.floor(canvas.height * scale)}px`;
 }
 
 const isTouch = window.matchMedia('(pointer: coarse)').matches;

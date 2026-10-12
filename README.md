@@ -1,8 +1,20 @@
-# MUTANT 8-BIT
+# MUTANT 32-BIT
 
-An 8-bit browser action game starring **Maximus**, a shapeshifter loose in a city overrun by a viral outbreak. Run up skyscrapers, tear through the infected with shapeshifting powers, consume soldiers to steal their faces, and take down the Supreme Hunter.
+A 32-bit-style browser action game starring **Maximus**, a shapeshifter loose in a city overrun by a viral outbreak. Run up skyscrapers, tear through the infected with shapeshifting powers, consume soldiers to steal their faces, and take down the Supreme Hunter.
 
-Everything is original and generated in code: the pixel art is drawn from rectangles, the font is a hand-made 5×7 bitmap, and the chiptune music and sound effects are synthesized live with the Web Audio API. There are no image or audio files and no game engine.
+Everything is original and generated in code. The sprites are drawn from rectangles, the font is a hand-made 5×7 bitmap, and the music and sound effects are synthesized live with the Web Audio API. There are no image or audio files and no game engine.
+
+### The 32-bit look
+
+The game targets the look of the Saturn, PlayStation and GBA era of 2D games:
+
+- **Resolution:** a 400×224 widescreen view rendered at 2× (800×448), so sprites and scrolling move in half-pixel steps.
+- **Shaded, outlined sprites:** each pose is collected first, then drawn with a dark outline around the silhouette and automatic highlights and shadows on every part.
+- **Lighting:** additive glows for street lamps and their light cones, neon signs, headlights, muzzle flashes, rockets, explosions, viral tendrils and the Hive's pulsing veins.
+- **Atmosphere:** gradient skies, a moon, drifting clouds, three parallax skyline layers, horizon haze, searchlights over the military base, rain in the Infected Zone, embers in the Hive and the arena, blob shadows, a vignette, and a red pulse at low health.
+- **Detailed city:** whole shaded building facades with framed and reflective windows, sills, cornices and fire escapes; sidewalks with curbs and manholes; cars with headlights.
+- **HUD:** a portrait of Maximus, beveled bars with a damage trail, and power icons.
+- **Audio:** detuned sawtooth leads with vibrato, filtered bass with a sub-oscillator, chord pads and punchier drums, all through an echo and a synthetic reverb.
 
 ## Play
 
@@ -12,6 +24,10 @@ npm run dev      # http://localhost:5190
 ```
 
 `npm run build` writes a static site to `dist/` that runs from any folder: GitHub Pages, itch.io, Netlify, or a local file server.
+
+### Deploy to Render
+
+`render.yaml` is a Render Blueprint for a free static site. In the Render dashboard choose **New → Blueprint** and pick this repo. Render builds the game with `npm run build`, serves `dist/`, and redeploys on every push to `main`.
 
 ### Controls
 
@@ -55,9 +71,9 @@ On phones and tablets, on-screen buttons appear below the game.
 | `src/enemies.js` | Infected, soldier, Hunter, gunship and boss behaviour |
 | `src/level.js` | Seeded city generator (five districts, buildings, scaffolds, cars, fences, hive growth) |
 | `src/physics.js` | Tile collision, one-way platforms, wall detection |
-| `src/sprites.js` | Procedural pixel-art characters |
-| `src/render.js` | Parallax skylines, tiles, HUD and menus |
-| `src/audio.js` | Chiptune sound effects and a four-track music sequencer |
+| `src/sprites.js` | Procedural characters, drawn outlined and shaded |
+| `src/render.js` | Skies, parallax, buildings, lighting, weather, HUD and menus |
+| `src/audio.js` | Synthesized sound effects, four-track music sequencer, echo and reverb |
 | `src/input.js` | Keyboard, gamepad and touch merged into one set of actions |
 | `src/bot.js` | Autopilot for the title demo and testing |
 

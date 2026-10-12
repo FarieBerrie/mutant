@@ -1,0 +1,25 @@
+# Render Blueprint: in the Render dashboard choose New → Blueprint and select this repo.
+# The game builds to plain files in dist/, so it deploys as a free static site (no server).
+services:
+  - type: web
+    name: mutant
+    runtime: static
+    branch: main
+    # --include=dev: Vite is a devDependency and is needed to build.
+    buildCommand: npm ci --include=dev && npm run build
+    staticPublishPath: ./dist
+    pullRequestPreviewsEnabled: false
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+    headers:
+      # Built assets have content hashes in their names, so they can be cached forever.
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin

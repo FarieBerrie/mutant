@@ -277,7 +277,7 @@ function updateHeli(e, g) {
     return;
   }
   const tx = centerX(p) + Math.sin(e.animT / 70) * 70 - e.w / 2;
-  const ty = g.camera.y + 30 + Math.sin(e.animT / 37) * 6;
+  const ty = g.camera.y + 48 + Math.sin(e.animT / 37) * 6; // below the HUD
   e.vx = Math.max(-2.2, Math.min(2.2, e.vx + (tx - e.x) * 0.004));
   e.vx *= 0.98;
   e.vy = (ty - e.y) * 0.05;

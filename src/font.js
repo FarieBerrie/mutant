@@ -1,4 +1,4 @@
-// 5×7 bitmap font drawn pixel by pixel, so text matches the 8-bit art.
+// 5×7 bitmap font drawn pixel by pixel, so text matches the pixel art.
 
 const GLYPHS = {
   A: '01110,10001,10001,11111,10001,10001,10001',
