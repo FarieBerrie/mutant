@@ -1,0 +1,139 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: #000;
+  color: #fcfcfc;
+  overflow: hidden;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#stage {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+#screen {
+  display: block;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  background: #000;
+}
+
+.noscript {
+  font-family: monospace;
+  text-align: center;
+}
+
+/* ---------------------------------------------------------------- touch controls */
+
+#touch {
+  display: none;
+}
+
+body.touch #stage {
+  justify-content: flex-start;
+  padding-top: env(safe-area-inset-top);
+}
+
+body.touch #touch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: auto 1fr;
+  gap: 8px;
+  width: 100%;
+  max-width: 560px;
+  flex: 1;
+  padding: 10px 14px calc(14px + env(safe-area-inset-bottom));
+}
+
+.touch-top {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+}
+
+.touch-dpad {
+  display: grid;
+  grid-template-columns: repeat(3, 56px);
+  grid-template-rows: 56px 56px;
+  align-content: center;
+  gap: 6px;
+}
+
+.touch-dpad .tbtn-left {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  height: auto;
+}
+.touch-dpad .tbtn-right {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  height: auto;
+}
+.touch-dpad .tbtn-down {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.touch-face {
+  display: grid;
+  grid-template-columns: repeat(2, 64px);
+  grid-template-rows: repeat(2, 64px);
+  justify-content: end;
+  align-content: center;
+  gap: 8px;
+}
+
+.tbtn {
+  font: bold 15px/1 ui-monospace, Menlo, Consolas, monospace;
+  color: #fcfcfc;
+  background: #181818;
+  border: 2px solid #7c7c7c;
+  border-radius: 12px;
+  min-height: 44px;
+  padding: 0 10px;
+  touch-action: none;
+}
+
+.touch-face .tbtn {
+  border-radius: 50%;
+  font-size: 20px;
+}
+
+.tbtn-jump {
+  background: #881400;
+  border-color: #f87858;
+}
+.tbtn-attack {
+  background: #3c3c3c;
+}
+.tbtn-consume {
+  background: #3c2090;
+  border-color: #6844fc;
+}
+.touch-face .tbtn-dash {
+  font-size: 12px;
+}
+.tbtn-dev {
+  border-color: #ff2050;
+  color: #ff2050;
+}
+
+.tbtn.down {
+  background: #fcfcfc;
+  color: #000;
+}

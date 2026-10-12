@@ -1,0 +1,16 @@
+{
+  "name": "mutant-8bit",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MUTANT 8-BIT: an 8-bit browser action game. Parkour, shapeshifting powers, consume and disguise",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0"
+  }
+}
