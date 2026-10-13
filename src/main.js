@@ -243,14 +243,24 @@ function draw() {
 
 // ------------------------------------------------------------------- layout & loop
 
+// On touch screens the view may be stretched vertically up to this much to use the space
+// above the controls; more than that and sprites look too squashed.
+const MAX_TOUCH_STRETCH = 1.6;
+const touchEl = document.getElementById('touch');
+const stageEl = document.getElementById('stage');
+
 function resize() {
   const touch = document.body.classList.contains('touch');
-  const availH = window.innerHeight - (touch ? Math.min(220, window.innerHeight * 0.38) : 0);
+  const topPad = parseFloat(getComputedStyle(stageEl).paddingTop) || 0;
+  const availH = window.innerHeight - topPad - (touch ? touchEl.offsetHeight : 0);
   // Scale in canvas pixels; whole multiples when there is room, so pixels stay square.
   let scale = Math.min(window.innerWidth / canvas.width, availH / canvas.height);
-  if (scale >= 2) scale = Math.floor(scale);
-  canvas.style.width = `${Math.floor(canvas.width * scale)}px`;
-  canvas.style.height = `${Math.floor(canvas.height * scale)}px`;
+  if (scale >= 2 && !touch) scale = Math.floor(scale);
+  const w = Math.floor(canvas.width * scale);
+  let h = Math.floor(canvas.height * scale);
+  if (touch) h = Math.floor(Math.max(h, Math.min(availH, h * MAX_TOUCH_STRETCH)));
+  canvas.style.width = `${w}px`;
+  canvas.style.height = `${h}px`;
 }
 
 const isTouch = window.matchMedia('(pointer: coarse)').matches;

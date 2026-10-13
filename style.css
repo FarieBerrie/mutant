@@ -52,24 +52,30 @@ body.touch #touch {
   display: grid;
   grid-template-columns: 1fr 1fr;
   grid-template-rows: auto 1fr;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
   max-width: 560px;
-  flex: 1;
-  padding: 10px 14px calc(14px + env(safe-area-inset-bottom));
+  flex: none;
+  margin-top: auto;
+  padding: 6px 12px calc(8px + env(safe-area-inset-bottom));
 }
 
 .touch-top {
   grid-column: 1 / -1;
   display: flex;
   justify-content: center;
-  gap: 8px;
+  gap: 6px;
+}
+
+.touch-top .tbtn {
+  min-height: 32px;
+  font-size: 13px;
 }
 
 .touch-dpad {
   display: grid;
-  grid-template-columns: repeat(3, 56px);
-  grid-template-rows: 56px 56px;
+  grid-template-columns: repeat(3, 52px);
+  grid-template-rows: 44px 44px;
   align-content: center;
   gap: 6px;
 }
@@ -91,11 +97,11 @@ body.touch #touch {
 
 .touch-face {
   display: grid;
-  grid-template-columns: repeat(2, 64px);
-  grid-template-rows: repeat(2, 64px);
+  grid-template-columns: repeat(2, 50px);
+  grid-template-rows: repeat(2, 50px);
   justify-content: end;
   align-content: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .tbtn {
@@ -111,7 +117,7 @@ body.touch #touch {
 
 .touch-face .tbtn {
   border-radius: 50%;
-  font-size: 20px;
+  font-size: 18px;
 }
 
 .tbtn-jump {
