@@ -704,6 +704,85 @@ export function poseHeli(m, e, t) {
   m.light.visible = Math.floor(t / 20) % 2 === 0;
 }
 
+// ------------------------------------------------------------------- The cat
+
+export function buildCat() {
+  const b = new Builder();
+  const GREY = '#8a8a92';
+  const DARK = '#5e5e66';
+  const LIGHT = '#c8c8cc';
+  const torso = b.pivot(b.body, 0, 0.3, 0);
+  b.cyl(torso, 0.105, 0.115, 0.42, 0, 0, 0, GREY, { rz: Math.PI / 2 }); // body, lying along x
+  b.box(torso, 0.3, 0.06, 0.12, 0.02, -0.08, 0, LIGHT); // belly
+  for (const x of [-0.12, -0.02, 0.08]) b.box(torso, 0.035, 0.03, 0.2, x, 0.1, 0, DARK); // stripes
+  const head = b.pivot(torso, 0.23, 0.08, 0);
+  b.ball(head, 0.1, 0.03, 0.04, 0, GREY);
+  b.box(head, 0.06, 0.06, 0.09, 0.11, 0.0, 0, LIGHT); // muzzle
+  b.box(head, 0.012, 0.018, 0.026, 0.142, 0.022, 0, '#e08890'); // nose
+  for (const z of [-0.05, 0.05]) {
+    b.cone(head, 0.035, 0.08, 0.02, 0.15, z, GREY, { sides: 4 }); // ears
+    b.cone(head, 0.018, 0.05, 0.03, 0.14, z, '#e0a0a8', { sides: 4 });
+    b.box(head, 0.01, 0.02, 0.026, 0.115, 0.06, z * 0.85, '#c8ff60', { glow: true }); // eyes
+  }
+  for (const z of [-0.035, 0.035]) b.box(head, 0.004, 0.004, 0.09, 0.13, 0.0, z * 2.2, LIGHT); // whiskers
+  const legs = [];
+  for (const [x, z] of [[0.15, -0.06], [0.15, 0.06], [-0.15, -0.06], [-0.15, 0.06]]) {
+    const leg = b.pivot(torso, x, -0.03, z);
+    b.cyl(leg, 0.03, 0.025, 0.25, 0, -0.125, 0, GREY, { sides: 6 });
+    b.ball(leg, 0.033, 0.01, -0.255, 0, LIGHT);
+    legs.push(leg);
+  }
+  // A three-part tail so it can curl
+  const tail1 = b.pivot(torso, -0.2, 0.05, 0);
+  b.cyl(tail1, 0.026, 0.03, 0.14, 0, 0.07, 0, GREY, { sides: 6 });
+  const tail2 = b.pivot(tail1, 0, 0.14, 0);
+  b.cyl(tail2, 0.022, 0.026, 0.14, 0, 0.07, 0, DARK, { sides: 6 });
+  const tail3 = b.pivot(tail2, 0, 0.14, 0);
+  b.cyl(tail3, 0.012, 0.022, 0.12, 0, 0.06, 0, GREY, { sides: 6 });
+  const [frontL, frontR, backL, backR] = legs;
+  return b.done({ kind: 'cat', torso, head, frontL, frontR, backL, backR, tail1, tail2, tail3 });
+}
+
+export function poseCat(m, c, t) {
+  resetPose(m);
+  // The tail sticks out behind and curls up at the end, swishing slowly.
+  m.tail1.rotation.z = 1.2;
+  m.tail2.rotation.z = -0.5;
+  m.tail3.rotation.z = -0.4;
+  const swish = Math.sin(t / 22);
+  m.tail1.rotation.x = swish * 0.35;
+  m.tail2.rotation.x = swish * 0.25;
+  if (c.state === 'run' && c.onGround) {
+    // Gallop: front legs together, back legs together, the spine flexing between
+    const s = Math.sin(c.animT * 0.55);
+    m.frontL.rotation.z = s * 0.9;
+    m.frontR.rotation.z = s * 0.75;
+    m.backL.rotation.z = -s * 0.9;
+    m.backR.rotation.z = -s * 0.75;
+    m.torso.rotation.z = s * 0.1;
+    m.head.rotation.z = -s * 0.1;
+    m.body.position.y = Math.abs(Math.cos(c.animT * 0.55)) * 0.04;
+    m.tail1.rotation.z = 1.45; // streaming out behind
+    m.tail2.rotation.z = -0.15;
+  } else if (!c.onGround) {
+    m.frontL.rotation.z = m.frontR.rotation.z = 0.9;
+    m.backL.rotation.z = m.backR.rotation.z = -0.9;
+  } else if (c.state === 'sit') {
+    // Sitting up: front raised, back legs folded, head level, tail wrapped round
+    m.torso.rotation.z = 0.6;
+    m.body.position.y = -0.06;
+    m.frontL.rotation.z = m.frontR.rotation.z = -0.6;
+    m.backL.rotation.z = m.backR.rotation.z = 1.1;
+    m.head.rotation.z = -0.55;
+    m.head.rotation.x = Math.sin(t / 90) * 0.2; // looking about
+    m.tail1.rotation.z = 2.2;
+    m.tail1.rotation.y = 0.9;
+    m.tail2.rotation.z = -0.9;
+  } else {
+    m.head.rotation.x = Math.sin(t / 60) * 0.15;
+  }
+}
+
 export const BUILDERS = {
   infected: [buildInfected, poseInfected],
   soldier: [buildSoldier, poseSoldier],

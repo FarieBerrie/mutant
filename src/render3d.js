@@ -6,7 +6,7 @@ import { HUD_H, HUD_W } from './config.js';
 import { isBoss } from './enemies.js';
 import { groundHeight } from './level.js';
 import { angleDiff } from './math.js';
-import { BUILDERS, buildHero, poseHero, smoothPose } from './models.js';
+import { BUILDERS, buildCat, buildHero, poseCat, poseHero, smoothPose } from './models.js';
 import { ATTACKS } from './player.js';
 import { createBlob, createDot, createGlow, useAnisotropy } from './textures.js';
 import { buildWorld } from './world3d.js';
@@ -38,6 +38,7 @@ export function rememberPositions(game) {
     o._pyaw = o.yaw;
   };
   keep(game.player);
+  keep(game.cat);
   for (const e of game.enemies) keep(e);
   for (const pr of game.projectiles) keep(pr);
   for (const pt of game.particles) keep(pt);
@@ -153,6 +154,8 @@ export function createRenderer(canvas) {
   scene.add(dynamic);
   const hero = buildHero();
   dynamic.add(hero.root);
+  const cat = buildCat();
+  dynamic.add(cat.root);
   const models = new Map();
 
   const MAX_SHADOWS = 120;
@@ -368,6 +371,13 @@ export function createRenderer(canvas) {
     const blink = p.invuln > 0 && !p.consume && p.dev === 0 && p.dash === 0 && Math.floor(t / 3) % 2;
     if (blink && p.alive) hero.root.visible = false;
     if (p.alive) s = placeShadow(s, level, pp, 1.2);
+
+    const cp = blend(game.cat, alpha);
+    cat.root.position.set(cp.x, cp.y, cp.z);
+    cat.root.rotation.y = -cp.yaw;
+    poseCat(cat, game.cat, t);
+    smoothPose(cat, ease);
+    s = placeShadow(s, level, cp, 0.7);
 
     const seen = new Set();
     for (const e of game.enemies) {

@@ -68,6 +68,7 @@ On phones and tablets, a joystick and buttons appear below the game; drag on the
 - **Ten districts:**
   - Midtown, the Infected Zone, the Military Base and the Hive lead to the **Supreme Hunter**. It leaps at you and lands with a shockwave ring (jump it), charges across the arena, summons infected, and has stun windows where you can consume it. Beating it knocks down the arena's far wall.
   - The Harbor, the Toxic Refinery, the Financial District and the Quarantine Wall lead to **the Behemoth**. It's armoured: everything but the blade does 40% damage. It ground-pounds for shockwave rings and falling rubble (watch for shadows), lobs acid, and marks the street where spikes are about to burst up.
+- **A companion:** a grey cat follows Maximus everywhere. It trots at his heel, sits and meows when he stops, and when he leaves it behind (say, by running up a building) it reappears beside him in a puff of smoke. Enemies ignore it.
 - **Extras:** score, time bonus, high score saved in the browser, and a title screen where the game plays itself.
 
 ## Code tour
@@ -89,9 +90,10 @@ On phones and tablets, a joystick and buttons appear below the game; drag on the
 | `src/main.js` | Screens, the third-person camera, layout and the main loop |
 | `src/audio.js` | Synthesized sound effects, four-track music sequencer, echo and reverb |
 | `src/input.js` | Keyboard, mouse, gamepad and touch merged into actions, a movement stick and a camera look |
+| `src/cat.js` | The cat that follows Maximus |
 | `src/bot.js` | Autopilot for the title demo and testing |
 
-The game logic doesn't use three.js or touch the DOM, so it runs headless. `npm test` runs 30 tests covering the city, movement and wall-running, combat, the blade, consume and disguise, death and respawn, both boss fights and the gate between them. One test runs the autopilot (made invulnerable) through every district and both bosses to the victory screen.
+The game logic doesn't use three.js or touch the DOM, so it runs headless. `npm test` runs 33 tests covering the city, movement and wall-running, the cat, combat, the blade, consume and disguise, death and respawn, both boss fights and the gate between them. One test runs the autopilot (made invulnerable) through every district and both bosses to the victory screen.
 
 For screenshots and tuning, `?shot=play:300&x=600&yaw=0.5` starts a bot-driven game with the player at x = 600 m, fast-forwards 300 frames, turns the camera to that heading and draws a single frame.
 

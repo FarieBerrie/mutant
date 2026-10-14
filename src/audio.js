@@ -233,6 +233,10 @@ export function createAudio() {
       tone({ type: 'sawtooth', freq: 200, to: 25, dur: 2.0, vol: 0.2 });
     },
     menu: () => tone({ freq: 660, dur: 0.04, vol: 0.08 }),
+    meow: () => {
+      tone({ type: 'triangle', freq: 620, to: 940, dur: 0.13, vol: 0.12 });
+      tone({ type: 'triangle', freq: 940, to: 520, dur: 0.24, at: 0.12, vol: 0.11 });
+    },
     start: () => arp(['A4', 'E5', 'A5'], 0.07),
     pause: () => arp(['E5', 'A4'], 0.06),
   };

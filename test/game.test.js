@@ -247,6 +247,39 @@ describe('combat', () => {
   });
 });
 
+describe('the cat', () => {
+  test('keeps up when Maximus runs down the street', () => {
+    const { game, input } = quietGame();
+    const p = placePlayer(game, openStreet(game, 40));
+    game.cat.x = p.x - 1;
+    game.cat.z = p.z;
+    input.hold('up');
+    step(game, input, 180);
+    assert.ok(Math.hypot(game.cat.x - p.x, game.cat.z - p.z) < 4, `cat is ${Math.hypot(game.cat.x - p.x, game.cat.z - p.z).toFixed(1)} m behind`);
+  });
+
+  test('finds him on a rooftop after he runs up a building', () => {
+    const { game, input } = quietGame();
+    const b = game.level.boxes.find((bx) => bx.kind === 'building' && bx.side === 1 && bx.x0 > 20 && bx.y1 >= 16);
+    const p = placePlayer(game, (b.x0 + b.x1) / 2, b.z0 - 3);
+    game.cat.x = p.x - 1;
+    game.cat.z = p.z;
+    input.hold('right');
+    step(game, input, 240);
+    input.release('right');
+    step(game, input, 120);
+    assert.equal(p.ground, b, 'Maximus made it onto the roof');
+    assert.ok(Math.abs(game.cat.y - p.y) < 0.6, `cat at y=${game.cat.y.toFixed(1)}, Maximus at ${p.y.toFixed(1)}`);
+    assert.ok(Math.hypot(game.cat.x - p.x, game.cat.z - p.z) < 3);
+  });
+
+  test('sits down when he stands still', () => {
+    const { game, input } = quietGame();
+    step(game, input, 300);
+    assert.equal(game.cat.state, 'sit');
+  });
+});
+
 describe('boss arenas', () => {
   function enterArena(index) {
     const ctx = quietGame();

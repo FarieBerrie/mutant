@@ -1,3 +1,4 @@
+import { createCat, updateCat } from './cat.js';
 import { MASS_MAX, PAL, PLAYER_MAX_HP, STEP } from './config.js';
 import { canSee, createEnemy, ENEMY_TYPES, isBoss, isConsumable, updateEnemy } from './enemies.js';
 import { boxesNear, buildLevel, districtAt, groundHeight, openArena } from './level.js';
@@ -45,6 +46,7 @@ export class Game {
     const keepMass = this.player ? Math.floor(this.player.mass / 2) : 0;
     this.player = createPlayer(cp.x, groundHeight(this.level, cp.x, cp.z, 0.4), cp.z);
     this.player.mass = keepMass;
+    this.cat = createCat(this.player);
     this.viewYaw = 0;
     this.enemies = [];
     this.projectiles = [];
@@ -115,6 +117,7 @@ export class Game {
       p.x = this.arena.x0 + 1;
       p.vx = Math.max(p.vx, 0);
     }
+    updateCat(this.cat, this);
 
     this.activateSpawns();
     this.spawnAmbient();
