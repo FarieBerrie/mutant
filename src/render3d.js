@@ -8,10 +8,10 @@ import { groundHeight } from './level.js';
 import { angleDiff } from './math.js';
 import { BUILDERS, buildHero, poseHero, smoothPose } from './models.js';
 import { ATTACKS } from './player.js';
-import { createBlob, createDot, createGlow } from './textures.js';
+import { createBlob, createDot, createGlow, useAnisotropy } from './textures.js';
 import { buildWorld } from './world3d.js';
 
-const RENDER_HEIGHT = 360; // vertical resolution of the 3D frame, before it's scaled up
+const RENDER_HEIGHT = 540; // vertical resolution of the 3D frame, before it's scaled up
 const POSE_EASE = 22; // how fast limbs blend toward a new pose (per second)
 
 /**
@@ -134,7 +134,7 @@ export function createRenderer(canvas) {
   const FLECKS = 400;
   const fleckGeo = new THREE.BufferGeometry();
   fleckGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(FLECKS * 3), 3));
-  const flecks = new THREE.Points(fleckGeo, new THREE.PointsMaterial({ size: 0.25, color: 0xff7a30, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+  const flecks = new THREE.Points(fleckGeo, new THREE.PointsMaterial({ size: 0.3, map: createDot(), color: 0xff7a30, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
   flecks.frustumCulled = false;
   scene.add(flecks);
   const fleckSeeds = Array.from({ length: FLECKS }, () => [Math.random() * 60 - 30, Math.random() * 30, Math.random() * 60 - 30, Math.random()]);
@@ -255,6 +255,7 @@ export function createRenderer(canvas) {
   function setLevel(level) {
     if (worldSeed === level.seed) return;
     if (world) scene.remove(world.group);
+    useAnisotropy(Math.min(8, renderer.capabilities.getMaxAnisotropy()));
     world = buildWorld(level);
     worldSeed = level.seed;
     scene.add(world.group);

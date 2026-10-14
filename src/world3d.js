@@ -2,8 +2,9 @@
 // decorations, the street itself and a distant skyline. Gates are kept as their own meshes so
 // they can disappear when an arena opens.
 import * as THREE from 'three';
+import { Batch, buildDetails, skylineCrowns } from './details3d.js';
 import { createRng } from './rng.js';
-import { createFacades, createGlow, createRoof, createStreet, FACADE_SIZE } from './textures.js';
+import { createFacades, createGlow, createPaving, createRoof, createStreet, FACADE_SIZE } from './textures.js';
 
 const ROOF_TILE = 8;
 const CONTAINER_COLORS = ['#b0302a', '#2a5a9a', '#d08a20', '#3a7a4a', '#7a7a80', '#a04a8a'];
@@ -90,9 +91,10 @@ export function buildWorld(level) {
     if (b.gate) {
       const q = new Quads();
       q.walls(b, color);
-      const mesh = new THREE.Mesh(q.geometry(), facadeMaterial(facades.wall, windowMaterials));
-      gates.set(b.id, mesh);
-      group.add(mesh);
+      const gate = new THREE.Group();
+      gate.add(new THREE.Mesh(q.geometry(), facadeMaterial(facades.wall, windowMaterials)));
+      gates.set(b.id, gate);
+      group.add(gate);
       continue;
     }
     if (!byStyle.has(style)) byStyle.set(style, new Quads());
@@ -102,37 +104,26 @@ export function buildWorld(level) {
   for (const [style, quads] of byStyle) group.add(new THREE.Mesh(quads.geometry(), facadeMaterial(facades[style], windowMaterials)));
   group.add(new THREE.Mesh(roofs.geometry(), new THREE.MeshLambertMaterial({ map: createRoof(), vertexColors: true })));
 
-  // ---- street props
-  const props = new Quads();
-  const glows = []; // [x, y, z, color, size]
-  for (const b of level.boxes) {
-    if (b.kind === 'car') {
-      const c = tinted(b.color);
-      const front = rng.chance(0.5) ? 1 : -1;
-      props.solid({ x0: b.x0, x1: b.x1, y0: 0.3, y1: 0.95, z0: b.z0, z1: b.z1 }, c);
-      const cab = front > 0 ? [b.x0 + 0.7, b.x1 - 1.3] : [b.x0 + 1.3, b.x1 - 0.7];
-      props.solid({ x0: cab[0], x1: cab[1], y0: 0.95, y1: 1.5, z0: b.z0 + 0.12, z1: b.z1 - 0.12 }, tinted('#9ad0f0', 0.7));
-      for (const wx of [b.x0 + 0.8, b.x1 - 0.8]) for (const wz of [b.z0, b.z1 - 0.2]) props.solid({ x0: wx - 0.35, x1: wx + 0.35, y0: 0, y1: 0.55, z0: wz, z1: wz + 0.2 }, tinted('#101012'));
-      const fx = front > 0 ? b.x1 + 0.05 : b.x0 - 0.05;
-      glows.push([fx, 0.7, b.z0 + 0.35, '#fff0a0', 1.4], [fx, 0.7, b.z1 - 0.35, '#fff0a0', 1.4]);
-    } else if (b.kind === 'fence') {
-      props.solid({ ...b, y0: 2.4, y1: 2.6 }, tinted('#9a9aa0'));
-      for (let z = b.z0; z <= b.z1; z += 3) props.solid({ x0: b.x0 - 0.05, x1: b.x1 + 0.05, y0: 0, y1: 2.6, z0: z, z1: z + 0.15 }, tinted('#8a8a90'));
-    } else if (b.kind === 'hive') {
-      props.solid(b, tinted('#5a1450'));
-    }
-  }
+  // ---- detail geometry: building trim, cars, lamps, street furniture, arena buttresses
+  const details = buildDetails(level);
+  for (const m of details.meshes) group.add(m);
+  for (const [id, mesh] of details.gateMeshes) if (mesh) gates.get(id)?.add(mesh);
+  const glows = []; // [x, y, z, color]
+  for (const g of details.glows) glows.push([g.x, g.y, g.z, g.color]);
   const fenceMesh = buildFenceMesh(level);
   if (fenceMesh) group.add(fenceMesh);
 
+  // Sidewalks: paving on top, kerb faces in the detail batch
+  const sidewalks = new Quads();
+  for (const b of level.boxes) if (b.kind === 'sidewalk') sidewalks.solid(b, tinted('#ffffff'));
+  if (sidewalks.pos.length) group.add(new THREE.Mesh(sidewalks.geometry(), new THREE.MeshLambertMaterial({ map: createPaving(), vertexColors: true })));
+
   // ---- decorations
+  const props = new Quads();
   for (const d of level.decor) {
     if (d.kind === 'lamp') {
-      const s = d.z > 0 ? -1 : 1; // arm reaches out over the road
-      props.solid({ x0: d.x - 0.08, x1: d.x + 0.08, y0: 0, y1: 6, z0: d.z - 0.08, z1: d.z + 0.08 }, tinted('#2a2a30'));
-      props.solid({ x0: d.x - 0.08, x1: d.x + 0.08, y0: 5.9, y1: 6.05, z0: Math.min(d.z, d.z + s * 1.4), z1: Math.max(d.z, d.z + s * 1.4) }, tinted('#2a2a30'));
-      glows.push([d.x, 5.8, d.z + s * 1.3, '#ffe090', 3.5]);
-      d.pool = { x: d.x, z: d.z + s * 2.5 };
+      glows.push([d.light.x, d.light.y, d.light.z, '#ffe090']);
+      d.pool = { x: d.light.x, z: d.light.z + (d.z > 0 ? -1 : 1) };
     } else if (d.kind === 'neon') {
       const zFace = d.z + (d.side > 0 ? -0.06 : 0.06);
       props.solid({ x0: d.x, x1: d.x + d.w, y0: d.y, y1: d.y + 0.8, z0: Math.min(zFace, d.z), z1: Math.max(zFace, d.z) }, tinted(d.color, 1.6));
@@ -212,16 +203,23 @@ export function buildWorld(level) {
   }
   group.add(new THREE.Mesh(far.geometry(), new THREE.MeshLambertMaterial({ vertexColors: true })));
   const skyline = new Quads();
+  const crowns = new Batch();
   for (const side of [-1, 1]) {
     for (let x = -100; x < level.length + 100; ) {
       const w = rng.range(14, 30);
       const zNear = W + 8 + rng.range(0, 30);
       const h = rng.range(25, 95);
-      skyline.walls({ x0: x, x1: x + w, y0: 0, y1: h, z0: side > 0 ? zNear : -zNear - rng.range(15, 30), z1: side > 0 ? zNear + rng.range(15, 30) : -zNear }, tinted('#ffffff', 0.25));
+      const depth = rng.range(15, 30);
+      const box = { x0: x, x1: x + w, y0: 0, y1: h, z0: side > 0 ? zNear : -zNear - depth, z1: side > 0 ? zNear + depth : -zNear };
+      skyline.walls(box, tinted('#ffffff', 0.25));
+      skyline.top(box, tinted('#303036'));
+      skylineCrowns(crowns, box.x0, box.x1, box.z0, box.z1, h, rng);
       x += w + rng.range(2, 12);
     }
   }
   group.add(new THREE.Mesh(skyline.geometry(), facadeMaterial(facades.concrete, windowMaterials)));
+  const crownMesh = crowns.mesh(new THREE.MeshLambertMaterial({ vertexColors: true }));
+  if (crownMesh) group.add(crownMesh);
 
   return { group, gates, windowMaterials, groundMaterials, glowPoints };
 }

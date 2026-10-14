@@ -6,6 +6,12 @@ import { createRng } from './rng.js';
 
 export const FACADE_SIZE = 16; // metres covered by one facade texture
 const PX = 8; // texture pixels per metre
+let anisotropy = 1;
+
+/** Sharper textures at glancing angles (the street, facades seen side-on); set before building. */
+export function useAnisotropy(n) {
+  anisotropy = n;
+}
 
 function texture(w, h, draw) {
   const c = document.createElement('canvas');
@@ -17,6 +23,7 @@ function texture(w, h, draw) {
   t.colorSpace = THREE.SRGBColorSpace;
   t.magFilter = THREE.LinearFilter;
   t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.anisotropy = anisotropy;
   return t;
 }
 
@@ -252,6 +259,21 @@ export function createRoof() {
     ctx.fillRect(40, 10, 10, 8);
     ctx.fillStyle = '#8a8880';
     ctx.fillRect(41, 11, 8, 2);
+  });
+}
+
+/** Sidewalk paving slabs, 1 m square. */
+export function createPaving() {
+  const rng = createRng(41);
+  return texture(32, 32, (ctx) => {
+    ctx.fillStyle = '#9a9a92';
+    ctx.fillRect(0, 0, 32, 32);
+    noise(ctx, 32, 32, rng, 0.8);
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.fillRect(0, 0, 32, 1);
+    ctx.fillRect(0, 0, 1, 32);
+    ctx.fillRect(0, 16, 32, 1);
+    ctx.fillRect(16, 0, 1, 32);
   });
 }
 

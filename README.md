@@ -8,10 +8,11 @@ Everything is original and generated in code. The characters are built from boxe
 
 The game targets the look of the Nintendo 64 era of 3D games:
 
-- **Low resolution, soft picture:** the 3D view renders 360 lines tall with antialiasing and is scaled up smoothly, like the N64's soft video output. The HUD stays crisp pixel art.
+- **Soft but clear picture:** the 3D view renders up to 540 lines tall with antialiasing and anisotropic texture filtering, and is scaled up smoothly. The HUD stays crisp pixel art.
 - **Low-poly characters:** Maximus, soldiers, infected, Hunters, the gunship and both bosses are built from boxes, tapered cylinders, cones and rounded shapes, with knees and elbows. Each limb is merged into one mesh, so a character costs only a handful of draw calls.
 - **Smooth motion:** the game simulates at a fixed 60 steps a second, and everything drawn (characters, projectiles, particles, the camera) is interpolated between steps, so movement is smooth on any refresh rate. Limbs blend between poses instead of snapping.
 - **Soft textures:** facades, roofs, the street, shipping containers, refinery pipework and hive flesh are painted on small canvases and filtered smoothly, the way the N64 did. Lit windows glow at night.
+- **Detailed city:** buildings have plinths, floor bands, corner pilasters, cornices and parapets, with air-con units and stair huts on the roofs; glass towers have fins and stepped crowns; refineries have pipes and catwalks. Streets have raised sidewalks with kerbs, shaped cars with round wheels, lamp posts, hydrants, bins, benches, news boxes and traffic lights. Arena walls have buttresses and spikes.
 - **Fog and blob shadows:** distance fog hides the draw distance, and every character casts a round shadow.
 - **Districts that blend:** each district has its own sky, fog colour, lighting and weather (rain, embers, falling ash, a lightning storm), and they blend as you cross from one to the next.
 - **HUD:** the pixel-art HUD from the 2D game, drawn over the 3D view.
@@ -81,6 +82,7 @@ On phones and tablets, a joystick and buttons appear below the game; drag on the
 | `src/math.js` | Vector helpers, segment and ray tests |
 | `src/render3d.js` | The 3D view: themes, sky, fog, lights, weather, characters, projectiles, effects |
 | `src/world3d.js` | Static city meshes, merged for speed |
+| `src/details3d.js` | Building trim, rooftop clutter, cars, lamps, street furniture and arena detail |
 | `src/models.js` | Low-poly characters and their poses |
 | `src/textures.js` | Procedural textures |
 | `src/hud.js` | HUD and menus, drawn over the 3D view |

@@ -6,6 +6,7 @@ import { WORLD } from './config.js';
 import { createRng } from './rng.js';
 
 export const FLOOR = 4; // metres per storey
+export const SIDEWALK = 0.15; // kerb height; low enough to step up onto
 const CELL = 16; // the collision grid buckets boxes by x
 const ARENA_WALL = 60;
 const BUILDING_STYLES = ['brick', 'concrete', 'tan', 'glass'];
@@ -138,7 +139,9 @@ export function buildLevel(seed = 1985) {
       }
     }
     if (d.theme !== 'hive') {
-      for (let lx = x0 + 8; lx < x1 - 4; lx += 20) for (const side of [-1, 1]) level.decor.push({ kind: 'lamp', x: lx, y: 0, z: side * (A + 1.5) });
+      // Raised sidewalks along both sides of the avenue, with lamps on them
+      for (const side of [-1, 1]) addBox(x0, x1, 0, SIDEWALK, side * A, side * (A + 3), { kind: 'sidewalk' });
+      for (let lx = x0 + 8; lx < x1 - 4; lx += 20) for (const side of [-1, 1]) level.decor.push({ kind: 'lamp', x: lx, y: SIDEWALK, z: side * (A + 1.5) });
     }
 
     // Enemies. Soldiers sometimes stand guard on front-row roofs.
