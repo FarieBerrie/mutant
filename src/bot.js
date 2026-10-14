@@ -1,6 +1,6 @@
 // A simple autopilot that plays the game: used for the title-screen demo and for screenshots.
 import { MASS_MAX } from './config.js';
-import { isConsumable } from './enemies.js';
+import { isBoss, isConsumable } from './enemies.js';
 import { centerX, centerY } from './physics.js';
 
 export function createBot() {
@@ -35,16 +35,17 @@ export function createBot() {
           else if (t % 8 === 0) held.add('attack');
           if (Math.abs(dx) < 14) dir = 0;
         }
-        // Claws for the big ones, fists for everything else.
-        const want = ahead.type === 'hunter' || ahead.type === 'boss' ? 'p2' : 'p1';
-        if (p.power !== (want === 'p2' ? 'claws' : 'fists')) held.add(want);
+        // The blade for the armoured Behemoth, claws for the other big ones, fists otherwise.
+        const want = ahead.type === 'behemoth' ? ['p5', 'blade'] : ahead.type === 'hunter' || isBoss(ahead) ? ['p2', 'claws'] : ['p1', 'fists'];
+        if (p.power !== want[1]) held.add(want[0]);
       }
       if (dir > 0) held.add('right');
       else if (dir < 0) held.add('left');
 
       if (p.mass >= MASS_MAX && ahead && Math.abs(centerX(ahead) - px) < 80) held.add('dev');
-      // Jump the boss's shockwaves
+      // Jump the bosses' shockwaves and step off marked spikes
       if (game.projectiles.some((pr) => pr.kind === 'wave' && Math.abs(pr.x - px) < 40)) held.add('jump');
+      if (game.projectiles.some((pr) => pr.kind === 'spike' && pr.t < pr.warn && Math.abs(pr.x + pr.w / 2 - px) < 12)) held.add('dash');
 
       // Get unstuck
       if (Math.abs(p.x - lastX) < 0.2 && !p.attack && !p.consume) stuck++;

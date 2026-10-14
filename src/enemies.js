@@ -1,5 +1,5 @@
 import { PHYS, TILE } from './config.js';
-import { isLedge, isSolid, tileAt } from './level.js';
+import { isLedge, isSolid, surfaceRow, tileAt } from './level.js';
 import { centerX, centerY, moveBody, overlaps } from './physics.js';
 
 export const ENEMY_TYPES = {
@@ -7,8 +7,12 @@ export const ENEMY_TYPES = {
   soldier: { w: 10, h: 22, hp: 5, score: 100, heal: 25, mass: 20, consumable: true },
   hunter: { w: 18, h: 26, hp: 30, score: 500, heal: 40, mass: 60, consumable: 'stunned' },
   heli: { w: 40, h: 16, hp: 18, score: 800, flying: true },
-  boss: { w: 28, h: 36, hp: 160, score: 5000, heal: 40, mass: 50, consumable: 'stunned' },
+  boss: { w: 28, h: 36, hp: 160, score: 5000, heal: 40, mass: 50, consumable: 'stunned', boss: true, name: 'SUPREME HUNTER' },
+  // Armoured: only the blade cuts it properly; other attacks do 40% damage.
+  behemoth: { w: 40, h: 46, hp: 260, score: 10000, heal: 50, mass: 60, consumable: 'stunned', boss: true, armored: true, name: 'THE BEHEMOTH' },
 };
+
+export const isBoss = (e) => ENEMY_TYPES[e.type].boss === true;
 
 let nextId = 1;
 
@@ -27,8 +31,8 @@ export function createEnemy(type, x, feetY, rng = Math.random) {
     maxHp: def.hp,
     facing: rng() < 0.5 ? -1 : 1,
     onGround: false,
-    state: type === 'boss' ? 'intro' : 'idle',
-    t: type === 'boss' ? 110 : 0,
+    state: def.boss ? 'intro' : 'idle',
+    t: def.boss ? 110 : 0,
     cooldown: 30 + Math.floor(rng() * 40),
     leapCd: 60,
     shootT: 40 + Math.floor(rng() * 40),
@@ -151,7 +155,7 @@ function updateSoldier(e, g) {
     target = p;
     g.spotted(e);
   } else {
-    const threats = g.enemies.filter((o) => o.type === 'infected' || o.type === 'hunter' || o.type === 'boss');
+    const threats = g.enemies.filter((o) => o.type === 'infected' || o.type === 'hunter' || isBoss(o));
     target = nearest(e, threats, 160, 40);
   }
 
@@ -396,10 +400,131 @@ function updateBoss(e, g) {
   gravity(e, g.level);
 }
 
+// The Behemoth: slow, armoured, and fights at range. Ground pounds send shockwaves both ways
+// (and from phase 2 bring rubble down from above), acid spit arcs at you, and from phase 2
+// spikes burst out of the street where it marks the ground.
+function updateBehemoth(e, g) {
+  const p = g.player;
+  e.animT++;
+  const pct = e.hp / e.maxHp;
+  e.phase = pct > 0.66 ? 1 : pct > 0.33 ? 2 : 3;
+  const dx = centerX(p) - centerX(e);
+  if (e.cooldown > 0) e.cooldown--;
+
+  switch (e.state) {
+    case 'intro':
+      e.vx = 0;
+      if (e.t === 100) {
+        g.sfx('roar');
+        g.shake(16);
+      }
+      if (--e.t <= 0) e.state = 'stalk';
+      break;
+    case 'stunned':
+      e.vx = 0;
+      if (--e.t <= 0) e.state = 'stalk';
+      break;
+    case 'windup':
+      e.vx = 0;
+      if (--e.t <= 0) {
+        e.state = 'swipe';
+        e.t = 12;
+        e.hitPlayer = false;
+      }
+      break;
+    case 'swipe': {
+      const box = { x: e.facing > 0 ? e.x + e.w - 8 : e.x - 34, y: e.y + 10, w: 42, h: 36 };
+      if (!e.hitPlayer && overlaps(box, p)) {
+        e.hitPlayer = true;
+        g.damagePlayer(22, centerX(e), 6);
+      }
+      if (--e.t <= 0) {
+        e.state = 'stalk';
+        e.cooldown = 36;
+      }
+      break;
+    }
+    case 'pound':
+      e.vx = 0;
+      if (--e.t <= 0) {
+        g.shake(14);
+        g.sfx('quake');
+        const groundY = e.y + e.h;
+        for (const dir of [-1, 1]) {
+          g.spawnProjectile({ kind: 'wave', x: centerX(e) - 6 + dir * 16, y: groundY - 12, w: 12, h: 12, vx: dir * 3.2, vy: 0, life: 130, owner: 'behemoth', dmg: 16 });
+        }
+        if (e.phase >= 2) {
+          const n = 2 + e.phase;
+          for (let i = 0; i < n; i++) {
+            const x = centerX(p) + (i - (n - 1) / 2) * 42 + (Math.random() - 0.5) * 16;
+            g.spawnProjectile({ kind: 'rock', x: x - 5, y: g.camera.y - 24 - i * 22, w: 10, h: 10, vx: 0, vy: 0.5, life: 260, owner: 'behemoth', dmg: 14 });
+          }
+        }
+        e.state = 'stalk';
+        e.cooldown = 64 - e.phase * 8;
+      }
+      break;
+    case 'spit':
+      e.vx = 0;
+      if (--e.t <= 0) {
+        const n = e.phase === 3 ? 5 : 3;
+        const mouthX = centerX(e) + e.facing * 16;
+        for (let i = 0; i < n; i++) {
+          const vx = Math.max(-4.6, Math.min(4.6, dx / 46)) + (i - (n - 1) / 2) * 0.7;
+          g.spawnProjectile({ kind: 'acid', x: mouthX - 3, y: e.y + 8, w: 6, h: 6, vx, vy: -4.2 - (i % 2) * 0.7, gravity: 0.18, life: 200, owner: 'behemoth', dmg: 12 });
+        }
+        g.sfx('spit');
+        e.state = 'stalk';
+        e.cooldown = 46;
+      }
+      break;
+    case 'spikes':
+      e.vx = 0;
+      if (--e.t <= 0) {
+        const n = e.phase === 3 ? 5 : 3;
+        for (let i = 0; i < n; i++) {
+          const x = centerX(p) + (i - (n - 1) / 2) * 44;
+          const col = Math.floor(x / TILE);
+          const groundY = surfaceRow(g.level, col) * TILE;
+          g.spawnProjectile({ kind: 'spike', x: x - 6, y: groundY - 30, w: 12, h: 30, vx: 0, vy: 0, t: 0, warn: 44, life: 74, owner: 'behemoth', dmg: 16 });
+        }
+        g.sfx('spikeWarn');
+        e.state = 'stalk';
+        e.cooldown = 70;
+      }
+      break;
+    default: {
+      e.state = 'stalk';
+      e.facing = sign(dx);
+      e.vx = e.facing * [0.6, 0.8, 1.0][e.phase - 1];
+      if (e.cooldown > 0) break;
+      const roll = Math.random();
+      if (Math.abs(dx) < 46) {
+        e.state = 'windup';
+        e.t = e.phase === 3 ? 12 : 18;
+      } else if (roll < 0.35) {
+        e.state = 'pound';
+        e.t = 34;
+        g.sfx('roarSmall');
+      } else if (roll < 0.65) {
+        e.state = 'spit';
+        e.t = 22;
+      } else if (e.phase >= 2 && roll < 0.85) {
+        e.state = 'spikes';
+        e.t = 20;
+        g.sfx('roarSmall');
+      } else {
+        e.cooldown = 30;
+      }
+    }
+  }
+  gravity(e, g.level);
+}
+
 export function updateEnemy(e, g) {
   e.animT++;
   if (e.flash > 0) e.flash--;
-  if (e.cooldown > 0 && e.type !== 'boss' && e.type !== 'hunter') e.cooldown--;
+  if (e.cooldown > 0 && !isBoss(e) && e.type !== 'hunter') e.cooldown--;
   if (e.grabbed) {
     e.vx = 0;
     return;
@@ -415,5 +540,7 @@ export function updateEnemy(e, g) {
       return updateHeli(e, g);
     case 'boss':
       return updateBoss(e, g);
+    case 'behemoth':
+      return updateBehemoth(e, g);
   }
 }

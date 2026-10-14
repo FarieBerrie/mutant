@@ -1,8 +1,8 @@
 import { MASS_MAX, PHYS, PLAYER_MAX_HP } from './config.js';
 import { moveBody, wallBeside } from './physics.js';
 
-export const POWERS = ['fists', 'claws', 'whip'];
-export const POWER_NAMES = { fists: 'FISTS', claws: 'CLAWS', whip: 'WHIPFIST' };
+export const POWERS = ['fists', 'claws', 'whip', 'blade'];
+export const POWER_NAMES = { fists: 'FISTS', claws: 'CLAWS', whip: 'WHIPFIST', blade: 'BLADE' };
 
 // Attack frames. box = [forward offset from centre, offset up from feet, width, height].
 export const ATTACKS = {
@@ -13,6 +13,12 @@ export const ATTACKS = {
   ],
   claws: [{ dur: 24, from: 7, to: 13, box: [1, -28, 26, 28], dmg: 3, kb: 3.4, lift: -2.5, super: true }],
   whip: [{ dur: 28, from: 9, to: 17, box: [5, -18, 68, 10], dmg: 2, kb: 2.6, lift: -1.5, super: true }],
+  // Sword arm: a fast horizontal slash, then a heavy overhead cleave. Its slashes cut bullets
+  // and rockets out of the air, and it bites through armour that blunts the other powers.
+  blade: [
+    { dur: 18, from: 5, to: 9, box: [0, -26, 36, 18], dmg: 3, kb: 2.6, lift: -1.5, super: true, cuts: true },
+    { dur: 26, from: 8, to: 14, box: [-6, -40, 44, 40], dmg: 5, kb: 4.4, lift: -4, super: true, cuts: true },
+  ],
 };
 
 const DROP_FRAMES = 12;
@@ -61,7 +67,7 @@ function startAttack(p, game, power, index) {
   const def = ATTACKS[power][index];
   p.attack = { power, index, t: 0, hits: new Set() };
   p.comboQueued = false;
-  if (p.onGround && power === 'fists') p.vx = p.facing * 1.4; // small lunge
+  if (p.onGround && (power === 'fists' || power === 'blade')) p.vx = p.facing * (power === 'blade' ? 2 : 1.4); // small lunge
   game.sfx(power === 'fists' ? 'punch' : power);
   if (def.super) game.superMove(power);
 }
@@ -120,6 +126,7 @@ export function updatePlayer(p, game, input) {
   if (input.pressed('p1')) select('fists');
   if (input.pressed('p2')) select('claws');
   if (input.pressed('p3')) select('whip');
+  if (input.pressed('p5')) select('blade');
   if (input.pressed('cycle')) select(POWERS[(POWERS.indexOf(p.power) + 1) % POWERS.length]);
   if (input.pressed('p4')) {
     p.armor = !p.armor;
@@ -165,7 +172,7 @@ export function updatePlayer(p, game, input) {
   // Attack
   if (input.pressed('attack') && !p.slam) {
     if (p.attack) {
-      if (p.attack.power === 'fists' && p.attack.index < 2) p.comboQueued = true;
+      if (p.attack.index < ATTACKS[p.attack.power].length - 1) p.comboQueued = true;
     } else if (!p.onGround && p.power === 'claws' && input.down('down')) {
       p.slam = true;
       p.vx = 0;
@@ -180,7 +187,7 @@ export function updatePlayer(p, game, input) {
     p.attack.t++;
     const def = ATTACKS[p.attack.power][p.attack.index];
     if (p.attack.t >= def.dur) {
-      if (p.comboQueued) startAttack(p, game, 'fists', p.attack.index + 1);
+      if (p.comboQueued) startAttack(p, game, p.attack.power, p.attack.index + 1);
       else p.attack = null;
     }
   }

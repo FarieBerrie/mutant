@@ -26,6 +26,7 @@ const KEYS = {
   Digit2: ['p2'],
   Digit3: ['p3'],
   Digit4: ['p4'],
+  Digit5: ['p5'],
   KeyQ: ['cycle'],
   KeyE: ['cycle'],
   Enter: ['start'],

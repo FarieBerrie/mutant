@@ -1,12 +1,17 @@
 import { MASS_MAX, PAL, PLAYER_MAX_HP, TILE, VIEW_H, VIEW_W } from './config.js';
-import { canSee, createEnemy, ENEMY_TYPES, isConsumable, updateEnemy } from './enemies.js';
-import { buildLevel, districtAt, isSolid, surfaceRow, tileAt } from './level.js';
+import { canSee, createEnemy, ENEMY_TYPES, isBoss, isConsumable, updateEnemy } from './enemies.js';
+import { buildLevel, districtAt, isSolid, openArena, surfaceRow, tileAt } from './level.js';
 import { centerX, centerY, overlaps } from './physics.js';
 import { attackBox, createPlayer, updatePlayer } from './player.js';
 
 const WITNESS_RANGE = 150;
 // Damage sources that count as the player's doing (score, alerting soldiers).
-const BY_PLAYER = new Set(['player', 'consume', 'devastator']);
+const BY_PLAYER = new Set(['player', 'blade', 'consume', 'devastator']);
+// Armoured enemies take this share of damage from everything but the blade.
+const ARMOR_FACTOR = 0.4;
+// Projectiles a blade slash can cut out of the air.
+const CUTTABLE = new Set(['bullet', 'rocket', 'acid', 'rock']);
+const TIME_BONUS = 40000;
 
 /**
  * One play-through: the city, the player, everyone in it, and the rules that connect them.
@@ -24,6 +29,7 @@ export class Game {
     this.frame = 0;
     this.checkpoint = 0;
     this.listeners = new Set();
+    this.bossesDefeated = new Set(); // arena indexes; survives respawns
     this.reset();
   }
 
@@ -45,9 +51,11 @@ export class Game {
     this.flash = 0;
     this.mode = 'play';
     this.modeT = 0;
+    this.arena = null; // the arena you're locked in
     this.arenaLocked = false;
     this.boss = null;
-    this.victoryT = 0;
+    this.bossDownT = 0;
+    this.armorHintT = -999;
     this.ambientT = 0;
     this.camera = { x: Math.max(0, cpX - VIEW_W / 3), y: 0 };
     this.spawnCursor = this.level.spawns.findIndex((s) => s.x > cpX + 40);
@@ -98,8 +106,8 @@ export class Game {
 
     const p = this.player;
     updatePlayer(p, this, this.input);
-    if (this.arenaLocked && p.x < this.level.arena.x0 + 4) {
-      p.x = this.level.arena.x0 + 4;
+    if (this.arenaLocked && p.x < this.arena.x0 + 4) {
+      p.x = this.arena.x0 + 4;
       p.vx = Math.max(p.vx, 0);
     }
 
@@ -112,34 +120,53 @@ export class Game {
     this.updateProjectiles();
 
     // Remove the dead (the boss lingers for its death sequence).
-    this.enemies = this.enemies.filter((e) => !e.dead || (e === this.boss && this.victoryT > 0));
+    this.enemies = this.enemies.filter((e) => !e.dead || (e === this.boss && this.bossDownT > 0));
     // Enemies far behind the camera are dropped to keep things fast.
-    this.enemies = this.enemies.filter((e) => e.type === 'boss' || e.type === 'heli' || e.x > this.camera.x - VIEW_W * 1.5);
+    this.enemies = this.enemies.filter((e) => isBoss(e) || e.type === 'heli' || e.x > this.camera.x - VIEW_W * 1.5);
 
     this.updateCheckpoints();
     this.updateArena();
     this.updateParticles();
     this.updateCamera();
 
-    // The boss goes down in a chain of explosions before the victory screen.
-    if (this.victoryT > 0 && this.boss && this.victoryT % 12 === 0) {
+    // A boss goes down in a chain of explosions. The last one wins the game; the others
+    // open their arena's far wall.
+    if (this.bossDownT > 0 && this.boss && this.bossDownT % 12 === 0) {
       const b = this.boss;
       this.explode(b.x + Math.random() * b.w, b.y + Math.random() * b.h, 0, 0);
     }
-    if (this.victoryT > 0 && --this.victoryT === 0) {
-      this.mode = 'victory';
-      this.modeT = 0;
-      this.timeBonus = Math.max(0, 20000 - Math.floor(this.frame / 60) * 20);
-      this.score += this.timeBonus;
-      this.emit('victory');
+    if (this.bossDownT > 0 && --this.bossDownT === 0) {
+      if (this.arena.final) this.win();
+      else this.leaveArena();
     }
+  }
+
+  win() {
+    this.mode = 'victory';
+    this.modeT = 0;
+    this.timeBonus = Math.max(0, TIME_BONUS - Math.floor(this.frame / 60) * 20);
+    this.score += this.timeBonus;
+    this.emit('victory');
+  }
+
+  leaveArena() {
+    openArena(this.level, this.arena);
+    this.arenaLocked = false;
+    this.arena = null;
+    this.boss = null;
+    this.flash = 10;
+    this.shake(14);
+    this.sfx('slam');
+    const p = this.player;
+    this.popup(centerX(p), p.y - 14, 'THE WAY IS OPEN', PAL.yellow);
+    this.emit('arenaCleared');
   }
 
   activateSpawns() {
     const spawns = this.level.spawns;
     while (this.spawnCursor < spawns.length && spawns[this.spawnCursor].x < this.camera.x + VIEW_W + 48) {
       const s = spawns[this.spawnCursor++];
-      if (this.level.arena && s.x >= this.level.arena.x0) continue;
+      if (this.level.arenas.some((a) => s.x >= a.x0 && s.x < a.x1)) continue;
       this.enemies.push(createEnemy(s.type, s.x, s.y));
     }
   }
@@ -200,7 +227,7 @@ export class Game {
 
     // A gunship joins the hunt when the military is on high alert.
     const hasHeli = this.enemies.some((e) => e.type === 'heli' && !e.dead);
-    if (this.alert >= 60 && !hasHeli && !p.disguised && this.district <= 2 && !this.arenaLocked) {
+    if (this.alert >= 60 && !hasHeli && !p.disguised && this.level.districts[this.district].gunship && !this.arenaLocked) {
       const heli = createEnemy('heli', this.camera.x + VIEW_W + 40, this.camera.y + 10);
       heli.shootT = 90;
       this.enemies.push(heli);
@@ -249,6 +276,13 @@ export class Game {
   damageEnemy(e, dmg, kx, ky, source) {
     if (e.dead) return;
     const p = this.player;
+    if (ENEMY_TYPES[e.type].armored && source === 'player') {
+      dmg *= ARMOR_FACTOR;
+      if (this.frame - this.armorHintT > 240) {
+        this.armorHintT = this.frame;
+        this.popup(centerX(e), e.y - 8, 'ARMORED - USE THE BLADE (5)', PAL.grayL);
+      }
+    }
     if (BY_PLAYER.has(source) && e.type === 'soldier') {
       if (p.disguised) this.blowDisguise();
       this.alert = Math.max(this.alert, 70);
@@ -256,7 +290,7 @@ export class Game {
     }
     e.hp -= dmg;
     e.flash = 6;
-    if (e.type !== 'heli' && e.type !== 'boss' && e.state !== 'stunned') {
+    if (e.type !== 'heli' && !isBoss(e) && e.state !== 'stunned') {
       e.vx = kx;
       e.vy = Math.min(e.vy, ky);
       e.stagger = 10;
@@ -264,10 +298,10 @@ export class Game {
     }
     const colors = e.type === 'soldier' ? [PAL.redD, PAL.olive, PAL.red] : [PAL.viral, PAL.greenL, PAL.zombieD];
     this.addParticles(centerX(e), centerY(e), 5, colors);
-    if (source === 'player') p.mass = Math.min(MASS_MAX, p.mass + 2);
+    if (source === 'player' || source === 'blade') p.mass = Math.min(MASS_MAX, p.mass + 2);
 
     if (e.hp <= 0) {
-      if (e.type === 'boss') e.hp = 0;
+      if (isBoss(e)) e.hp = 0;
       this.killEnemy(e, source);
       return;
     }
@@ -279,7 +313,7 @@ export class Game {
       e.t = 150;
       this.popup(centerX(e), e.y - 4, 'CONSUME IT!', PAL.yellow);
     }
-    if (e.type === 'boss') {
+    if (isBoss(e)) {
       for (const mark of [66, 33]) {
         if (pct * 100 <= mark && !e.stunnedOnce[mark]) {
           e.stunnedOnce[mark] = true;
@@ -304,7 +338,7 @@ export class Game {
       if (source !== 'devastator') this.player.mass = Math.min(MASS_MAX, this.player.mass + 5);
       this.popup(centerX(e), e.y, `+${def.score}`, PAL.white);
     }
-    if (e.type === 'heli' || e.type === 'boss') {
+    if (e.type === 'heli' || isBoss(e)) {
       this.explode(centerX(e), centerY(e), 34, 0);
       this.shake(16);
     } else {
@@ -312,8 +346,10 @@ export class Game {
       this.addParticles(centerX(e), centerY(e), 16, colors, { speed: 2.5 });
       this.sfx('kill');
     }
-    if (e.type === 'boss') {
-      this.victoryT = 180;
+    if (e === this.boss) {
+      this.bossDownT = 180;
+      this.bossesDefeated.add(this.level.arenas.indexOf(this.arena));
+      this.projectiles = this.projectiles.filter((pr) => pr.owner === 'player');
       this.flash = 20;
       this.sfx('bossDeath');
       this.emit('bossDefeated');
@@ -324,18 +360,35 @@ export class Game {
     const p = this.player;
     const box = attackBox(p);
     if (!box) return;
+    const source = p.attack.power === 'blade' ? 'blade' : 'player';
     let landed = false;
     for (const e of this.enemies) {
       if (e.dead || e.grabbed || p.attack.hits.has(e.id) || !overlaps(box, e)) continue;
       p.attack.hits.add(e.id);
       const dmg = box.def.dmg * (p.armor ? 1.25 : 1);
-      this.damageEnemy(e, dmg, p.facing * box.def.kb, box.def.lift ?? -1.5, 'player');
+      this.damageEnemy(e, dmg, p.facing * box.def.kb, box.def.lift ?? -1.5, source);
       landed = true;
     }
+    if (box.def.cuts) this.cutProjectiles(box);
     if (landed) {
       this.hitstop = 3;
       this.sfx('hit');
     }
+  }
+
+  /** Blade slashes cut bullets, rockets, acid and rubble out of the air. */
+  cutProjectiles(box) {
+    let cut = false;
+    for (const pr of this.projectiles) {
+      if (pr.life <= 0 || pr.owner === 'player' || !CUTTABLE.has(pr.kind) || !overlaps(box, pr)) continue;
+      pr.life = 0;
+      cut = true;
+      const x = pr.x + pr.w / 2;
+      const y = pr.y + pr.h / 2;
+      if (pr.kind === 'rocket') this.explode(x, y, 0, 0);
+      else this.addParticles(x, y, 8, pr.kind === 'acid' ? [PAL.greenL, PAL.green, PAL.white] : [PAL.white, PAL.yellowL, PAL.grayL], { speed: 2.2 });
+    }
+    if (cut) this.sfx('clang');
   }
 
   tryConsume() {
@@ -377,8 +430,8 @@ export class Game {
     this.addParticles(centerX(e), centerY(e), 24, [PAL.viral, PAL.redD, PAL.ink, PAL.viralL], { speed: 1.8, toward: p });
     this.popup(centerX(p), p.y - 4, `+${def.heal} HP`, PAL.greenL);
 
-    if (e.type === 'boss') {
-      // The boss can't be swallowed whole: consuming it while stunned tears out a chunk.
+    if (isBoss(e)) {
+      // A boss can't be swallowed whole: consuming it while stunned tears out a chunk.
       e.state = 'stalk';
       e.cooldown = 60;
       this.damageEnemy(e, 25, 0, 0, 'consume');
@@ -418,7 +471,7 @@ export class Game {
       const dx = centerX(e) - centerX(p);
       const dy = centerY(e) - centerY(p);
       if (Math.hypot(dx, dy) > 140) continue;
-      this.damageEnemy(e, e.type === 'boss' ? 30 : 14, Math.sign(dx || 1) * 5, -4, 'devastator');
+      this.damageEnemy(e, isBoss(e) ? 30 : 14, Math.sign(dx || 1) * 5, -4, 'devastator');
     }
     this.projectiles = this.projectiles.filter((pr) => pr.owner === 'player');
     for (let i = 0; i < 48; i++) {
@@ -442,7 +495,7 @@ export class Game {
   }
 
   summonInfected(count) {
-    const a = this.level.arena;
+    const a = this.arena;
     for (let i = 0; i < count; i++) {
       const x = i % 2 ? this.camera.x + 10 : this.camera.x + VIEW_W - 10;
       const col = Math.floor(Math.max(a.x0 + 8, Math.min(a.x1 - 40, x)) / TILE);
@@ -487,13 +540,31 @@ export class Game {
         pr.vy = (pr.vy / sp) * 2.4;
         if (this.frame % 3 === 0) this.particles.push({ x: pr.x, y: pr.y, vx: 0, vy: 0, life: 14, color: PAL.grayL, size: 2, gravity: -0.02 });
       }
+      if (pr.gravity) pr.vy += pr.gravity;
+      if (pr.kind === 'rock') pr.vy = Math.min(pr.vy + 0.22, 7);
       pr.x += pr.vx;
       pr.y += pr.vy;
+
+      if (pr.kind === 'spike') {
+        // Marked on the ground first, then erupts for a moment.
+        if (++pr.t === pr.warn) {
+          this.sfx('spike');
+          this.addParticles(pr.x + pr.w / 2, pr.y + pr.h, 6, [PAL.concrete, PAL.viral], { speed: 2 });
+        }
+        if (pr.t >= pr.warn && !pr.hit && p.alive && overlaps(pr, p)) {
+          pr.hit = true;
+          this.damagePlayer(pr.dmg, pr.x + pr.w / 2, 3);
+          p.vy = -5;
+        }
+        continue;
+      }
 
       const tile = tileAt(this.level, Math.floor((pr.x + pr.w / 2) / TILE), Math.floor((pr.y + pr.h / 2) / TILE));
       if (isSolid(tile) && pr.kind !== 'wave') {
         pr.life = 0;
         if (pr.kind === 'rocket') this.explode(pr.x, pr.y, 26, pr.dmg);
+        else if (pr.kind === 'acid') this.splash(pr, [PAL.greenL, PAL.green, PAL.oliveL]);
+        else if (pr.kind === 'rock') this.splash(pr, [PAL.concrete, PAL.concreteD, PAL.grayL], 4);
         else this.addParticles(pr.x, pr.y, 3, [PAL.yellow, PAL.grayL]);
         continue;
       }
@@ -522,6 +593,12 @@ export class Game {
         } else if (pr.life <= 0) {
           this.explode(pr.x, pr.y, 26, pr.dmg);
         }
+      } else if (pr.kind === 'acid' || pr.kind === 'rock') {
+        if (p.alive && overlaps(box, p)) {
+          pr.life = 0;
+          this.damagePlayer(pr.dmg, pr.x, 3);
+          this.splash(pr, pr.kind === 'acid' ? [PAL.greenL, PAL.green] : [PAL.concrete, PAL.grayL]);
+        }
       } else if (pr.kind === 'wave') {
         if (this.frame % 2 === 0) this.particles.push({ x: pr.x + pr.w / 2, y: pr.y + pr.h, vx: 0, vy: -1.5, life: 10, color: PAL.viralL, size: 2, gravity: 0.1 });
         if (p.alive && overlaps(box, p)) {
@@ -531,6 +608,18 @@ export class Game {
       }
     }
     this.projectiles = this.projectiles.filter((pr) => pr.life > 0);
+  }
+
+  /** Acid or rubble breaking up where it lands; rubble also hurts anyone standing close. */
+  splash(pr, colors, shake = 0) {
+    const x = pr.x + pr.w / 2;
+    const y = pr.y + pr.h / 2;
+    this.addParticles(x, y, 10, colors, { speed: 2 });
+    if (!shake) return;
+    this.shake(shake);
+    this.sfx('thud');
+    const p = this.player;
+    if (p.alive && Math.abs(centerX(p) - x) < 16 && Math.abs(p.y + p.h - (pr.y + pr.h)) < 20) this.damagePlayer(pr.dmg, x, 3);
   }
 
   // ---------------------------------------------------------------- world flow
@@ -553,18 +642,21 @@ export class Game {
   }
 
   updateArena() {
-    const a = this.level.arena;
+    if (this.arenaLocked) return;
     const p = this.player;
-    if (!a || this.arenaLocked || centerX(p) < a.x0 + TILE * 4) return;
+    const index = this.level.arenas.findIndex((a, i) => !this.bossesDefeated.has(i) && centerX(p) >= a.x0 + TILE * 4 && centerX(p) < a.x1);
+    if (index === -1) return;
+    const a = this.level.arenas[index];
+    this.arena = a;
     this.arenaLocked = true;
     this.enemies = this.enemies.filter((e) => e.x > a.x0);
     this.projectiles = [];
     this.alert = 0;
     const col = Math.floor((a.x0 + 220) / TILE);
-    this.boss = createEnemy('boss', a.x0 + 220, surfaceRow(this.level, col) * TILE);
+    this.boss = createEnemy(a.boss, a.x0 + 220, surfaceRow(this.level, col) * TILE);
     this.boss.facing = -1;
     this.enemies.push(this.boss);
-    this.emit('boss');
+    this.emit('boss', this.boss);
   }
 
   updateCamera() {
@@ -573,8 +665,8 @@ export class Game {
     let minX = 0;
     let maxX = this.level.width - VIEW_W;
     if (this.arenaLocked) {
-      minX = this.level.arena.x0;
-      maxX = this.level.arena.x1 - VIEW_W;
+      minX = this.arena.x0;
+      maxX = this.arena.x1 - VIEW_W;
     }
     const tx = Math.max(minX, Math.min(maxX, centerX(p) - VIEW_W / 2 + lead));
     this.camera.x += (tx - this.camera.x) * 0.1;

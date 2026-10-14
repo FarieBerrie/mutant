@@ -3,11 +3,12 @@
 // view; the canvas is scaled by DETAIL so half-pixel detail is available everywhere.
 import { alpha, GAME, GROUND_ROW, MASS_MAX, PAL, PLAYER_MAX_HP, ROWS, shade, snap, TILE, VIEW_H, VIEW_W } from './config.js';
 import { drawText, textWidth } from './font.js';
-import { T, tileAt } from './level.js';
+import { ENEMY_TYPES } from './enemies.js';
+import { surfaceRow, T, tileAt } from './level.js';
 import { centerX, centerY } from './physics.js';
-import { POWER_NAMES } from './player.js';
+import { ATTACKS, POWER_NAMES } from './player.js';
 import { hash2 } from './rng.js';
-import { drawBoss, drawHero, drawHeli, drawHunter, drawInfected, drawProjectile, drawSoldier } from './sprites.js';
+import { drawBehemoth, drawBoss, drawHero, drawHeli, drawHunter, drawInfected, drawProjectile, drawSoldier } from './sprites.js';
 
 export const CX = VIEW_W / 2;
 const GROUND_Y = GROUND_ROW * TILE;
@@ -38,7 +39,34 @@ const THEMES = {
     far: '#120204', mid: '#220406', near: '#2e060a', haze: '#d01c1c', lit: '#ff6060',
     moon: '#ff5a4a', weather: 'embers',
   },
+  harbor: {
+    sky: ['#01040c', '#061430', '#0c2a52', '#1c4c78', '#5a8aa8'],
+    far: '#081a30', mid: '#0c2440', near: '#10304c', haze: '#4a7aa0', lit: '#ffd890',
+    moon: '#f0f6ff', stars: true, clouds: '#2a4a6a',
+  },
+  toxic: {
+    sky: ['#020604', '#0a1a08', '#1c3410', '#3c5a14', '#9aa830'],
+    far: '#0c1a08', mid: '#14260c', near: '#1a3010', haze: '#8aa828', lit: '#d8ff60',
+    weather: 'ash', clouds: '#3a4a18',
+  },
+  storm: {
+    sky: ['#04060a', '#10141e', '#1e2432', '#323a4a', '#5a6474'],
+    far: '#121620', mid: '#1a2030', near: '#222a3a', haze: '#6a7a90', lit: '#fff0c0',
+    weather: 'rain', lightning: true, clouds: '#2a3040',
+  },
+  dawn: {
+    sky: ['#1a1a3a', '#4a3a6a', '#a05a7a', '#f08a6a', '#ffd08a'],
+    far: '#3a2a4a', mid: '#4a3456', near: '#583a5a', haze: '#ffb090', lit: '#fff0b0',
+    clouds: '#c07a8a', searchlights: true,
+  },
+  lair: {
+    sky: ['#000000', '#100602', '#261006', '#4a1e08', '#8a4010'],
+    far: '#140802', mid: '#200c04', near: '#2a1006', haze: '#e0601c', lit: '#ffa040',
+    moon: '#ffb050', weather: 'embers',
+  },
 };
+
+const CONTAINER_COLORS = ['#b0302a', '#2a5a9a', '#d08a20', '#3a7a4a', '#7a7a80', '#a04a8a'];
 
 const BUILDING_COLORS = {
   brick: { base: '#9c3a1c', trim: '#d8b890', glass: '#2a1a24' },
@@ -168,7 +196,22 @@ function drawSkyline(ctx, camX, camY, { factor, width, minH, maxH, color, haze, 
 }
 
 function drawWeather(ctx, theme, camX, t) {
-  if (theme.weather === 'rain') {
+  if (theme.lightning) {
+    // An occasional double flash
+    const k = t % 420;
+    if (k < 4 || (k > 9 && k < 12)) {
+      ctx.fillStyle = alpha('#e8f0ff', k < 4 ? 0.35 : 0.2);
+      ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    }
+  }
+  if (theme.weather === 'ash') {
+    for (let i = 0; i < 60; i++) {
+      const x = ((hash2(i, 51) * 480 - camX * 0.8 + Math.sin(t / 50 + i) * 10) % 480 + 480) % 480 - 40;
+      const y = ((hash2(i, 52) * 260 + t * (0.3 + hash2(i, 53) * 0.4)) % 260) - 20;
+      ctx.fillStyle = alpha(i % 4 ? '#b8b8a0' : '#e0ff90', 0.5);
+      ctx.fillRect(snap(x), snap(y), i % 3 ? 1 : 1.5, 1);
+    }
+  } else if (theme.weather === 'rain') {
     ctx.strokeStyle = alpha('#c8d8ff', 0.35);
     ctx.lineWidth = 0.5;
     ctx.beginPath();
@@ -204,6 +247,14 @@ function drawBuilding(ctx, b, camX, camY, t, theme) {
 
   if (b.style === 'hive') {
     drawHiveMass(ctx, x0, y0, w, y1 - y0, b, t);
+    return;
+  }
+  if (b.style === 'container') {
+    drawContainerStack(ctx, b, x0, y0, w, y1);
+    return;
+  }
+  if (b.style === 'industrial') {
+    drawRefinery(ctx, b, x0, y0, w, y1, t, theme);
     return;
   }
   const col = BUILDING_COLORS[b.style] || BUILDING_COLORS.concrete;
@@ -297,6 +348,78 @@ function drawBuilding(ctx, b, camX, camY, t, theme) {
   // Edge shadows so buildings read as solid blocks
   ctx.fillStyle = alpha('#000000', 0.35);
   ctx.fillRect(x1 - 1.5, y0 + 3, 1.5, y1 - y0 - 3);
+}
+
+/** Shipping containers stacked a tile high each, two per tile row where the stack is wide. */
+function drawContainerStack(ctx, b, x0, y0, w, y1) {
+  for (let r = b.top; r < GROUND_ROW; r++) {
+    const y = y0 + (r - b.top) * TILE;
+    const color = CONTAINER_COLORS[Math.floor(hash2(b.c0, r) * CONTAINER_COLORS.length)];
+    ctx.fillStyle = vGradient(ctx, y, y + TILE, [shade(color, 0.15), color, shade(color, -0.35)]);
+    ctx.fillRect(x0, y, w, TILE);
+    ctx.fillStyle = alpha('#000000', 0.25);
+    for (let x = x0 + 2; x < x0 + w - 1; x += 2.5) ctx.fillRect(x, y + 2, 0.5, TILE - 4); // corrugation
+    ctx.fillStyle = shade(color, -0.5);
+    ctx.fillRect(x0, y + TILE - 1, w, 1);
+    ctx.fillRect(x0, y, 1.5, TILE);
+    ctx.fillRect(x0 + w - 1.5, y, 1.5, TILE);
+    // Door end with locking bars, on alternate rows
+    if ((r + b.c0) % 2) {
+      const dx = x0 + w - 10;
+      ctx.fillStyle = shade(color, -0.25);
+      ctx.fillRect(dx, y + 1, 8, TILE - 2);
+      ctx.fillStyle = '#d8d8d0';
+      ctx.fillRect(dx + 2, y + 2, 0.5, TILE - 4);
+      ctx.fillRect(dx + 5, y + 2, 0.5, TILE - 4);
+    }
+    ctx.fillStyle = alpha('#ffffff', 0.15);
+    ctx.fillRect(x0, y, w, 0.5);
+  }
+}
+
+/** Refinery blocks: dark steel with pipework, hazard stripes and a few sickly lights. */
+function drawRefinery(ctx, b, x0, y0, w, y1, t, theme) {
+  const g = ctx.createLinearGradient(x0, 0, x0 + w, 0);
+  g.addColorStop(0, '#4a4e44');
+  g.addColorStop(0.7, '#363a30');
+  g.addColorStop(1, '#22261e');
+  ctx.fillStyle = g;
+  ctx.fillRect(x0, y0, w, y1 - y0);
+  // Pipes
+  for (let i = 0; i < 3; i++) {
+    const py = y0 + 8 + i * 14 + hash2(b.c0, i) * 6;
+    if (py > y1 - 6) break;
+    ctx.fillStyle = vGradient(ctx, py, py + 3, ['#9aa090', '#5a6050', '#3a3e34']);
+    ctx.fillRect(x0, py, w, 3);
+    for (let x = x0 + 6; x < x0 + w; x += 18) {
+      ctx.fillStyle = '#6a7060';
+      ctx.fillRect(x, py - 0.5, 2, 4);
+    }
+  }
+  // Vertical pipe and gauge lights
+  ctx.fillStyle = '#5a6050';
+  ctx.fillRect(x0 + w * 0.7, y0, 2.5, y1 - y0);
+  additive(ctx, () => {
+    for (let r = b.top + 1; r < GROUND_ROW; r += 2) {
+      const lx = x0 + 5 + hash2(b.c0, r) * (w - 10);
+      const ly = (r - b.top) * TILE + y0 + 6;
+      const pulse = 0.5 + 0.5 * Math.sin(t / 30 + r);
+      ctx.fillStyle = alpha(theme.lit, 0.8);
+      ctx.fillRect(lx, ly, 2, 2);
+      glow(ctx, lx + 1, ly + 1, 8, theme.lit, 0.35 * pulse);
+    }
+  });
+  // Hazard stripes along the base
+  for (let x = x0; x < x0 + w; x += 6) {
+    ctx.fillStyle = '#e0b020';
+    ctx.fillRect(x, y1 - 5, 3, 3);
+    ctx.fillStyle = '#1a1a1a';
+    ctx.fillRect(x + 3, y1 - 5, 3, 3);
+  }
+  ctx.fillStyle = '#6a6e60';
+  ctx.fillRect(x0 - 1, y0, w + 2, 2);
+  ctx.fillStyle = alpha('#000000', 0.35);
+  ctx.fillRect(x0 + w - 1.5, y0 + 2, 1.5, y1 - y0 - 2);
 }
 
 function drawHiveMass(ctx, x0, y0, w, h, b, t) {
@@ -458,7 +581,7 @@ function drawDecor(ctx, level, camX, camY, t, layer) {
   for (const d of level.decor) {
     const x = d.x - camX;
     const y = d.y - camY;
-    if (x < -60 || x > VIEW_W + 60) continue;
+    if (x < -100 || x > VIEW_W + 100) continue; // wide enough for a crane's boom
     if (layer === 'back') {
       if (d.kind === 'tower') {
         ctx.fillStyle = '#4a2c10';
@@ -494,6 +617,48 @@ function drawDecor(ctx, level, camX, camY, t, layer) {
         ctx.fillStyle = alpha(d.color, flicker);
         for (let k = 3; k < d.w - 3; k += 4) ctx.fillRect(x + k, y + 2.5, 2.5, 2);
         additive(ctx, () => glow(ctx, x + d.w / 2, y + 3.5, d.w * 0.9, d.color, 0.3 * flicker));
+      } else if (d.kind === 'crane') {
+        // Harbour gantry crane: lattice tower, boom, cable and a hanging container
+        const s = d.flip ? -1 : 1;
+        ctx.fillStyle = '#c87a1a';
+        ctx.fillRect(x - 4, y - 150, 2, 150);
+        ctx.fillRect(x + 4, y - 150, 2, 150);
+        ctx.fillStyle = '#8a5210';
+        for (let k = y - 146; k < y; k += 10) {
+          ctx.fillRect(x - 3, k, 8, 0.5);
+          ctx.fillRect(x - 3, k, 0.5, 10);
+        }
+        ctx.fillStyle = '#c87a1a';
+        ctx.fillRect(Math.min(x - 20, x + s * 70), y - 154, 90, 3);
+        ctx.fillStyle = '#2a2a2e';
+        ctx.fillRect(x + s * 50, y - 151, 0.5, 70);
+        ctx.fillStyle = CONTAINER_COLORS[Math.floor(hash2(d.x, 5) * CONTAINER_COLORS.length)];
+        ctx.fillRect(x + s * 50 - 12, y - 81, 24, 9);
+        const on = Math.floor(t / 40) % 2 === 0;
+        ctx.fillStyle = on ? '#ff3030' : '#601010';
+        ctx.fillRect(x, y - 158, 2, 2);
+        if (on) additive(ctx, () => glow(ctx, x + 1, y - 157, 9, '#ff2020', 0.6));
+      } else if (d.kind === 'stack') {
+        // Smokestack with a hazard band, a red light and drifting smoke
+        ctx.fillStyle = vGradient(ctx, y - 60, y, ['#6a6a62', '#4a4a44']);
+        ctx.fillRect(x + 2, y - 60, 10, 60);
+        ctx.fillStyle = '#c02020';
+        ctx.fillRect(x + 2, y - 54, 10, 3);
+        ctx.fillStyle = '#e8e8e0';
+        ctx.fillRect(x + 2, y - 51, 10, 2);
+        for (let k = 0; k < 6; k++) {
+          const age = ((t / 3 + k * 14 + d.x) % 84) / 84;
+          ctx.fillStyle = alpha('#9a9a88', 0.35 * (1 - age));
+          ctx.beginPath();
+          ctx.ellipse(x + 7 + age * 26, y - 62 - age * 40, 3 + age * 9, 2 + age * 6, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        const on = Math.floor(t / 35) % 2 === 0;
+        if (on) {
+          ctx.fillStyle = '#ff3030';
+          ctx.fillRect(x + 6, y - 62, 2, 2);
+          additive(ctx, () => glow(ctx, x + 7, y - 61, 8, '#ff2020', 0.5));
+        }
       }
     } else if (d.kind === 'lamp') {
       // Pole in front of the street, light cone and pool
@@ -526,6 +691,34 @@ function drawDecor(ctx, level, camX, camY, t, layer) {
 }
 
 // ------------------------------------------------------------------- characters & effects
+
+const PROJECTILE_LIGHT = { bullet: '#ffe080', rocket: '#ff8a30', wave: '#ff2050', acid: '#80ff40', spike: '#ff6030' };
+
+/** The bright arc a blade swing leaves behind. */
+function drawSlashTrail(ctx, p, cx, fy) {
+  const a = p.attack;
+  const def = ATTACKS.blade[a.index];
+  if (a.t < def.from || a.t > def.to + 3) return;
+  const k = (a.t - def.from) / (def.to - def.from);
+  const fade = a.t > def.to ? 1 - (a.t - def.to) / 4 : 1;
+  const ccw = p.facing < 0;
+  const start = a.index === 0 ? -0.9 : -1.9;
+  const sweep = a.index === 0 ? 1.4 : 2.2;
+  additive(ctx, () => {
+    ctx.strokeStyle = alpha('#ffe0e0', 0.55 * fade);
+    ctx.lineWidth = a.index === 0 ? 2 : 3;
+    ctx.beginPath();
+    const radius = a.index === 0 ? 26 : 32;
+    const from = start;
+    const to = start + sweep * Math.min(1, k + 0.25);
+    if (ccw) ctx.arc(cx, fy - 16, radius, Math.PI - to, Math.PI - from);
+    else ctx.arc(cx, fy - 16, radius, from, to);
+    ctx.stroke();
+    ctx.strokeStyle = alpha('#ff2040', 0.35 * fade);
+    ctx.lineWidth = 5;
+    ctx.stroke();
+  });
+}
 
 function blobShadow(ctx, cx, fy, w) {
   ctx.fillStyle = alpha('#000000', 0.4);
@@ -652,6 +845,21 @@ function powerIcon(ctx, x, y, power, armor) {
       ctx.lineTo(x + 7 + k * 2, y + 11);
       ctx.fill();
     }
+  } else if (power === 'blade') {
+    ctx.fillStyle = '#8a1a1a';
+    ctx.beginPath();
+    ctx.moveTo(x + 3, y + 11);
+    ctx.lineTo(x + 11, y + 2);
+    ctx.lineTo(x + 12, y + 3);
+    ctx.lineTo(x + 5, y + 12);
+    ctx.fill();
+    ctx.fillStyle = '#e0e0e8';
+    ctx.beginPath();
+    ctx.moveTo(x + 4, y + 10);
+    ctx.lineTo(x + 11, y + 2);
+    ctx.lineTo(x + 11.5, y + 2.5);
+    ctx.lineTo(x + 4.5, y + 10.5);
+    ctx.fill();
   } else {
     ctx.lineWidth = 1.2;
     ctx.strokeStyle = '#d02030';
@@ -706,7 +914,7 @@ function drawHud(ctx, game, t) {
     const b = game.boss;
     ctx.fillStyle = vGradient(ctx, VIEW_H - 22, VIEW_H, [alpha('#000000', 0.5), alpha('#000000', 0.85)]);
     ctx.fillRect(0, VIEW_H - 22, VIEW_W, 22);
-    drawText(ctx, 'SUPREME HUNTER', 10, VIEW_H - 19, '#ff7070', { shadow: '#000000' });
+    drawText(ctx, ENEMY_TYPES[b.type].name, 10, VIEW_H - 19, '#ff7070', { shadow: '#000000' });
     hudBar(ctx, 10, VIEW_H - 9, VIEW_W - 20, 4, b.hp / b.maxHp, b.phase === 3 ? '#ff2050' : '#c030c0', { glowing: b.phase === 3 });
   }
 
@@ -784,6 +992,9 @@ export function renderGame(ctx, game, t, { hud = true } = {}) {
     } else if (e.type === 'boss') {
       drawBoss(ctx, e, cx, fy, t);
       additive(ctx, () => glow(ctx, cx + e.facing * 8, fy - 40, 26, e.phase === 3 ? '#ff2040' : '#c040ff', 0.25));
+    } else if (e.type === 'behemoth') {
+      drawBehemoth(ctx, e, cx, fy, t);
+      additive(ctx, () => glow(ctx, cx, fy - 30, 40, e.phase === 3 ? '#ff3020' : '#ff8a30', 0.1));
     }
     if (e.type === 'soldier' && e.muzzle > 0) additive(ctx, () => glow(ctx, cx + e.facing * 14, fy - 15, 14, '#ffd060', 0.8));
   }
@@ -807,6 +1018,7 @@ export function renderGame(ctx, game, t, { hud = true } = {}) {
       ctx.globalAlpha = 1;
     }
     drawHero(ctx, p, pcx, pfy, t);
+    if (p.attack?.power === 'blade') drawSlashTrail(ctx, p, pcx, pfy);
     if (p.attack && p.power !== 'fists') additive(ctx, () => glow(ctx, pcx + p.facing * 14, pfy - 16, 22, '#ff2040', 0.3));
   }
 
@@ -814,9 +1026,20 @@ export function renderGame(ctx, game, t, { hud = true } = {}) {
   for (const pr of game.projectiles) {
     const x = snap(pr.x - camX);
     const y = snap(pr.y - camY);
+    if (pr.kind === 'rock') {
+      // A shadow on the ground shows where rubble will land
+      const groundY = surfaceRow(level, Math.floor((pr.x + pr.w / 2) / TILE)) * TILE - camY;
+      const near = Math.max(0.2, Math.min(1, 1 - (groundY - y) / 200));
+      ctx.fillStyle = alpha('#000000', 0.45 * near);
+      ctx.beginPath();
+      ctx.ellipse(x + pr.w / 2, groundY, 4 + near * 5, 1.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
     drawProjectile(ctx, pr, x, y, t);
-    const color = pr.kind === 'bullet' ? '#ffe080' : pr.kind === 'rocket' ? '#ff8a30' : '#ff2050';
-    additive(ctx, () => glow(ctx, x + pr.w / 2, y + pr.h / 2, pr.kind === 'bullet' ? 6 : 14, color, 0.7));
+    const color = PROJECTILE_LIGHT[pr.kind];
+    if (color && (pr.kind !== 'spike' || pr.t >= pr.warn)) {
+      additive(ctx, () => glow(ctx, x + pr.w / 2, y + pr.h / 2, pr.kind === 'bullet' ? 6 : 14, color, 0.7));
+    }
   }
   for (const pt of game.particles) {
     const life = Math.min(1, pt.life / 18);

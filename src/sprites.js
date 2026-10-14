@@ -165,12 +165,54 @@ export function drawHero(ctx, p, cx, fy, t) {
       r(7 + len, -17, 4, 6, PAL.grayL);
       r(11 + len, -16, 2, 4, PAL.white);
     }
+  } else if (atk && atk.power === 'blade') {
+    const cleave = atk.index === 1;
+    if (windup && !cleave) {
+      // Drawn back behind the shoulder
+      arm(-6, -19, 5, 3);
+      bladeSegment(r, -18 + lean, -24, 12, 'back');
+    } else if (windup) {
+      // Raised overhead
+      arm(-1, -31, 3, 13);
+      r(-1 + lean, -45, 3, 14, PAL.redD);
+      r(1 + lean, -45, 1, 13, PAL.grayL);
+      r(0 + lean, -47, 2, 2, PAL.white);
+    } else if (!cleave) {
+      // Horizontal slash: the arm is one long blade
+      arm(3, -17, 5, 3);
+      bladeSegment(r, 8 + lean, -18, 24, 'forward');
+    } else {
+      // Cleave: swung down and forward
+      arm(3, -22, 4, 6);
+      for (let i = 0; i < 6; i++) {
+        r(6 + lean + i * 4, -30 + i * 5, 5, 3, i % 2 ? PAL.redD : PAL.red);
+        r(8 + lean + i * 4, -31 + i * 5, 3, 1, PAL.grayL);
+      }
+      r(30 + lean, -2, 2, 2, PAL.white);
+    }
+  } else if (p.power === 'blade') {
+    // At rest the forearm is a bone blade, held low along the leg.
+    const swing = p.anim === 'run' ? Math.round(-Math.sin(phase) * 2) : 0;
+    arm(0 + swing, -16, 3, 6);
+    r(1 + swing + lean, -11, 2, 11, PAL.redD);
+    r(3 + swing + lean, -11, 1, 10, PAL.grayL);
+    r(2 + swing + lean, 0, 1, 2, PAL.white);
   } else {
     const swing = p.anim === 'run' ? Math.round(-Math.sin(phase) * 2) : 0;
     arm(0 + swing, -16, 3, 7);
     r(0 + swing + lean, -10, 3, 2, PAL.skin);
   }
   r.flush();
+}
+
+/** A straight blade from (x, y): red bone with a pale cutting edge and a white point. */
+function bladeSegment(r, x, y, len, dir) {
+  const x0 = dir === 'back' ? x - len + 12 : x;
+  r(x0, y, len, 3, PAL.redD);
+  r(x0, y - 1, len, 1, PAL.grayL);
+  r(x0 + 2, y + 1, len - 4, 1, PAL.red);
+  if (dir === 'forward') r(x0 + len, y - 1, 3, 3, PAL.white);
+  else r(x0 - 3, y - 1, 3, 3, PAL.white);
 }
 
 // ------------------------------------------------------------------- Military
@@ -274,6 +316,60 @@ export function drawBoss(ctx, e, cx, fy, t) {
   if (e.state === 'stunned') drawStunStars(ctx, cx, fy - 52, t);
 }
 
+// ------------------------------------------------------------------- The Behemoth
+
+export function drawBehemoth(ctx, e, cx, fy, t) {
+  const r = painter(ctx, cx, fy, e.facing, { scale: 2, flash: e.flash > 0 });
+  const skin = '#4a2a26';
+  const hide = '#2c1816';
+  const plate = '#6a645a';
+  const glow = e.phase === 3 ? (Math.floor(t / 5) % 2 ? '#ff3020' : '#ff7040') : '#ff8a30';
+  const step = Math.abs(e.vx) > 0.2 ? Math.round(Math.sin(e.animT * 0.12) * 2) : 0;
+  const crouch = e.state === 'pound' || e.state === 'spikes' ? 1 : 0;
+
+  // Legs like pillars
+  r(-9 + step, -8, 6, 8, hide);
+  r(-10 + step, -2, 8, 2, PAL.ink);
+  r(3 - step, -8, 6, 8, hide);
+  r(3 - step, -2, 8, 2, PAL.ink);
+  // Hunched body and the armour plates over its back
+  r(-11, -21 + crouch, 22, 14, skin);
+  r(-9, -11 + crouch, 18, 3, hide);
+  r(-13, -24 + crouch, 10, 7, plate);
+  r(-4, -25 + crouch, 10, 6, plate);
+  r(4, -23 + crouch, 9, 6, plate);
+  r(-13, -18 + crouch, 4, 6, plate);
+  // Molten cracks between the plates
+  r(-8, -17 + crouch, 1, 6, glow);
+  r(-1, -16 + crouch, 1, 5, glow);
+  r(5, -14 + crouch, 1, 4, glow);
+  r(-4, -19 + crouch, 4, 1, glow);
+  // Head, low and forward, with a heavy jaw
+  const open = e.state === 'spit' ? 2 : 0;
+  r(8, -20 + crouch, 7, 6, skin);
+  r(8, -21 + crouch, 6, 2, plate);
+  r(9, -14 + crouch + open, 7, 2, hide);
+  r(10, -15 + crouch, 5, 1, PAL.white);
+  if (open) r(10, -14 + crouch, 5, open, PAL.greenL);
+  r(13, -18 + crouch, 2, 1, glow);
+  // The great arm, by attack
+  if (e.state === 'pound' || e.state === 'windup' || e.state === 'spikes') {
+    r(4, -33, 7, 14, skin);
+    r(3, -37, 9, 5, plate);
+    r(5, -30, 1, 6, glow);
+  } else if (e.state === 'swipe') {
+    r(9, -17, 14, 6, skin);
+    r(22, -18, 4, 8, plate);
+    for (let i = 0; i < 3; i++) r(26, -18 + i * 3, 5, 1, PAL.white);
+  } else {
+    r(6, -15, 6, 12, skin);
+    r(5, -4, 8, 3, plate);
+    r(7, -12, 1, 5, glow);
+  }
+  r.flush();
+  if (e.state === 'stunned') drawStunStars(ctx, cx, fy - 58, t);
+}
+
 function drawStunStars(ctx, cx, y, t) {
   for (let i = 0; i < 3; i++) {
     const a = t / 10 + (i * Math.PI * 2) / 3;
@@ -315,6 +411,42 @@ export function drawProjectile(ctx, pr, x, y, t) {
     ctx.fillRect(x, y, 6, 3);
     ctx.fillStyle = Math.floor(t / 2) % 2 ? PAL.yellow : PAL.orange;
     ctx.fillRect(pr.vx > 0 ? x - 3 : x + 6, y, 3, 3);
+  } else if (pr.kind === 'acid') {
+    ctx.fillStyle = PAL.green;
+    ctx.fillRect(x, y, 6, 6);
+    ctx.fillStyle = PAL.greenL;
+    ctx.fillRect(x + 1, y + 1, 4, 3);
+    ctx.fillStyle = PAL.white;
+    ctx.fillRect(x + 1.5, y + 1, 1, 1);
+  } else if (pr.kind === 'rock') {
+    ctx.fillStyle = '#5a5650';
+    ctx.fillRect(x, y + 1, 10, 8);
+    ctx.fillRect(x + 1, y, 8, 10);
+    ctx.fillStyle = '#8a857c';
+    ctx.fillRect(x + 1, y + 1, 6, 4);
+    ctx.fillStyle = '#3a3632';
+    ctx.fillRect(x + 6, y + 6, 3, 3);
+  } else if (pr.kind === 'spike') {
+    const groundY = y + pr.h;
+    if (pr.t < pr.warn) {
+      // Warning: the street cracks and glows where the spike will come up
+      const on = Math.floor(t / 4) % 2;
+      ctx.fillStyle = on ? '#ff5030' : '#a02010';
+      ctx.fillRect(x - 2, groundY - 1, pr.w + 4, 1);
+      ctx.fillRect(x + 2, groundY - 2, 2, 1);
+      ctx.fillRect(x + 8, groundY - 2, 2, 1);
+    } else {
+      const grow = Math.min(1, (pr.t - pr.warn + 1) / 5);
+      const h = pr.h * grow;
+      for (const [dx, k] of [[0, 0.7], [4, 1], [8, 0.6]]) {
+        ctx.fillStyle = '#d8d0c0';
+        ctx.fillRect(x + dx, groundY - h * k, 4, h * k);
+        ctx.fillStyle = '#8a8070';
+        ctx.fillRect(x + dx + 3, groundY - h * k, 1, h * k);
+        ctx.fillStyle = PAL.white;
+        ctx.fillRect(x + dx + 1, groundY - h * k, 2, 2);
+      }
+    }
   } else if (pr.kind === 'wave') {
     ctx.fillStyle = PAL.viralL;
     for (let i = 0; i < 4; i++) ctx.fillRect(x + i * 3, y + 12 - (i % 2 ? 12 : 8), 2, i % 2 ? 12 : 8);

@@ -166,6 +166,21 @@ export function createAudio() {
       tone({ type: 'sawtooth', freq: 900, to: 300, dur: 0.1, vol: 0.06 });
     },
     whip: () => tone({ type: 'sawtooth', freq: 1200, to: 180, dur: 0.18, vol: 0.09 }),
+    blade: () => {
+      noise({ dur: 0.14, vol: 0.2, freq: 9000, to: 2500 });
+      tone({ type: 'triangle', freq: 1400, to: 600, dur: 0.12, vol: 0.06 });
+    },
+    clang: () => {
+      tone({ type: 'square', freq: 1800, to: 1500, dur: 0.12, vol: 0.06 });
+      tone({ type: 'triangle', freq: 2600, dur: 0.18, vol: 0.05 });
+    },
+    spit: () => noise({ dur: 0.25, vol: 0.18, freq: 1200, to: 300 }),
+    quake: () => {
+      noise({ dur: 0.7, vol: 0.38, freq: 400, to: 40 });
+      tone({ type: 'triangle', freq: 70, to: 25, dur: 0.6, vol: 0.4 });
+    },
+    spikeWarn: () => tone({ type: 'sawtooth', freq: 90, to: 140, dur: 0.5, vol: 0.12 }),
+    spike: () => noise({ dur: 0.18, vol: 0.25, freq: 3000, to: 500 }),
     hit: () => {
       tone({ freq: 180, to: 70, dur: 0.08, vol: 0.2 });
       noise({ dur: 0.06, vol: 0.15, freq: 1800 });
