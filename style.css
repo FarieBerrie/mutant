@@ -22,14 +22,28 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
 }
 
-#screen {
+/* The 3D view is rendered at low resolution and scaled up with hard pixels; the HUD sits on top. */
+#view {
+  position: relative;
+  flex: none;
+  cursor: crosshair;
+}
+
+#screen,
+#hud {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   display: block;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
-  background: #000;
+}
+
+#hud {
+  pointer-events: none;
 }
 
 .noscript {
@@ -44,19 +58,17 @@ body {
 }
 
 body.touch #stage {
-  justify-content: flex-start;
   padding-top: env(safe-area-inset-top);
 }
 
 body.touch #touch {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto auto;
   gap: 6px;
   width: 100%;
   max-width: 560px;
   flex: none;
-  margin-top: auto;
   padding: 6px 12px calc(8px + env(safe-area-inset-bottom));
 }
 
@@ -67,32 +79,28 @@ body.touch #touch {
   gap: 6px;
 }
 
-.touch-top .tbtn {
-  min-height: 32px;
-  font-size: 13px;
+.touch-stick {
+  position: relative;
+  width: 112px;
+  height: 112px;
+  align-self: center;
+  border: 2px solid #7c7c7c;
+  border-radius: 50%;
+  background: radial-gradient(circle, #242424 0%, #121212 70%);
+  touch-action: none;
 }
 
-.touch-dpad {
-  display: grid;
-  grid-template-columns: repeat(3, 52px);
-  grid-template-rows: 44px 44px;
-  align-content: center;
-  gap: 6px;
-}
-
-.touch-dpad .tbtn-left {
-  grid-column: 1;
-  grid-row: 1 / span 2;
-  height: auto;
-}
-.touch-dpad .tbtn-right {
-  grid-column: 3;
-  grid-row: 1 / span 2;
-  height: auto;
-}
-.touch-dpad .tbtn-down {
-  grid-column: 2;
-  grid-row: 2;
+.touch-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 46px;
+  height: 46px;
+  margin: -23px 0 0 -23px;
+  border-radius: 50%;
+  background: #3c3c3c;
+  border: 2px solid #bcbcbc;
+  pointer-events: none;
 }
 
 .touch-face {
@@ -113,6 +121,11 @@ body.touch #touch {
   min-height: 44px;
   padding: 0 10px;
   touch-action: none;
+}
+
+.touch-top .tbtn {
+  min-height: 32px;
+  font-size: 13px;
 }
 
 .touch-face .tbtn {

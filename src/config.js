@@ -1,21 +1,21 @@
 // Names shown in the game. Change these in one place if you publish it under another title.
 export const GAME = {
   title: 'MUTANT',
-  subtitle: '32-BIT',
+  subtitle: '64',
   hero: 'MAXIMUS',
 };
 
-// 32-bit-era widescreen: a 400×224 view of the world (25×14 tiles of 16 px), rendered at
-// DETAIL× so sprites, scrolling and effects get half-pixel precision.
-export const VIEW_W = 400;
-export const VIEW_H = 224;
-export const DETAIL = 2;
-export const TILE = 16;
-export const ROWS = 14;
-export const GROUND_ROW = 12; // rows 12–13 are the street
+// The HUD and menus are drawn on a 400×225 virtual canvas laid over the 3D view.
+export const HUD_W = 400;
+export const HUD_H = 225;
 
-/** Snap a world coordinate to the render grid (half pixels at DETAIL 2). */
-export const snap = (v) => Math.round(v * DETAIL) / DETAIL;
+// The simulation runs at a fixed 60 steps a second. World units are metres; +x runs along the
+// city from the first district to the last, y is up, z runs across the avenue.
+export const STEP = 1 / 60;
+export const WORLD = {
+  halfWidth: 40, // the city corridor spans z = -40..40
+  avenue: 9, // the avenue's road spans z = -9..9
+};
 
 // Base colours. The 32-bit renderer shades these automatically (see shade()).
 export const PAL = {
@@ -60,24 +60,27 @@ export const PAL = {
   tanD: '#8c6c3c',
 };
 
-// Physics, in pixels per frame at 60 fps.
+// Movement, in metres and seconds.
 export const PHYS = {
-  gravity: 0.38,
-  maxFall: 7,
-  glideFall: 1.0,
-  run: 2.4,
-  accel: 0.45,
-  friction: 0.6,
-  jump: 6.4,
-  doubleJump: 5.6,
-  wallClimb: 3.4,
-  wallJumpX: 3.6,
-  wallJumpY: 6.0,
-  dash: 5.8,
+  gravity: 34,
+  maxFall: 40,
+  run: 9.5,
+  accel: 70,
+  airAccel: 32,
+  friction: 60,
+  jump: 12.5,
+  doubleJump: 11.5,
+  glideFall: 3,
+  glideSpeed: 13,
+  wallClimb: 13,
+  wallJump: 10,
+  wallJumpUp: 11,
+  dash: 28,
   dashFrames: 10,
   dashCooldown: 36,
 };
 
+export const PLAYER = { radius: 0.4, height: 1.8 };
 export const PLAYER_MAX_HP = 100;
 export const MASS_MAX = 100;
 

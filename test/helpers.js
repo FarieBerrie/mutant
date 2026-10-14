@@ -1,8 +1,10 @@
-import { GROUND_ROW, TILE } from '../src/config.js';
 import { Game } from '../src/game.js';
-import { surfaceRow } from '../src/level.js';
+import { groundHeight } from '../src/level.js';
 
-/** Input you can drive from a test: hold/release buttons, or tap for a single frame. */
+/**
+ * Input you can drive from a test: hold/release buttons, or tap for a single frame. Directions
+ * move in world space: up = +x (along the city), right = +z.
+ */
 export function scriptedInput() {
   const held = new Set();
   let pressed = new Set();
@@ -16,6 +18,12 @@ export function scriptedInput() {
       pressed.add(a);
       held.add(a);
       taps.add(a);
+    },
+    moveVector() {
+      const x = (held.has('up') ? 1 : 0) - (held.has('down') ? 1 : 0);
+      const z = (held.has('right') ? 1 : 0) - (held.has('left') ? 1 : 0);
+      const len = Math.hypot(x, z) || 1;
+      return { x: x / len, z: z / len };
     },
     endFrame() {
       pressed = new Set();
@@ -34,28 +42,32 @@ export function quietGame() {
   return { game, input };
 }
 
-/** Moves the player to the first stretch of open street at least `width` px long. */
-export function placeOnOpenStreet(game, width = 200) {
-  const { level, player } = game;
-  const need = Math.ceil(width / TILE);
-  for (let c = 2; c < level.cols - need; c++) {
-    let clear = true;
-    for (let k = 0; k < need && clear; k++) clear = surfaceRow(level, c + k) === GROUND_ROW;
-    if (clear) {
-      player.x = c * TILE + 4;
-      player.y = GROUND_ROW * TILE - player.h;
-      player.vx = player.vy = 0;
-      game.camera.x = Math.max(0, player.x - 60);
-      return c * TILE;
-    }
+/** Puts the player on the street at (x, z), facing +x, and lets them settle. */
+export function placePlayer(game, x, z = 0) {
+  const p = game.player;
+  p.x = x;
+  p.z = z;
+  p.y = groundHeight(game.level, x, z, p.r);
+  p.vx = p.vy = p.vz = 0;
+  p.yaw = 0;
+  return p;
+}
+
+/** The first spot on the avenue's centre line with `clear` metres of open street ahead. */
+export function openStreet(game, clear = 20, from = 10) {
+  const { level } = game;
+  for (let x = from; x < level.length - clear; x += 1) {
+    let ok = true;
+    for (let k = 0; k <= clear && ok; k += 0.5) ok = groundHeight(level, x + k, 0, 1.5) === 0;
+    if (ok) return x;
   }
-  throw new Error(`No open street ${width}px wide`);
+  throw new Error(`No open street ${clear} m long`);
 }
 
 export function step(game, input, frames = 1, each = null) {
   for (let i = 0; i < frames; i++) {
     each?.(i);
     game.update();
-    input.endFrame();
+    input.endFrame?.();
   }
 }

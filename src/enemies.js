@@ -1,43 +1,47 @@
-import { PHYS, TILE } from './config.js';
-import { isLedge, isSolid, surfaceRow, tileAt } from './level.js';
-import { centerX, centerY, moveBody, overlaps } from './physics.js';
+import { PHYS, STEP } from './config.js';
+import { boxesNear, groundHeight } from './level.js';
+import { angleDiff, clamp, dirOf, distXZ, rayBox, yawTo } from './math.js';
+import { chest, moveBody } from './physics.js';
 
+// Sizes in metres (r is half the body's width).
 export const ENEMY_TYPES = {
-  infected: { w: 10, h: 20, hp: 4, score: 50, heal: 12, mass: 15, consumable: true },
-  soldier: { w: 10, h: 22, hp: 5, score: 100, heal: 25, mass: 20, consumable: true },
-  hunter: { w: 18, h: 26, hp: 30, score: 500, heal: 40, mass: 60, consumable: 'stunned' },
-  heli: { w: 40, h: 16, hp: 18, score: 800, flying: true },
-  boss: { w: 28, h: 36, hp: 160, score: 5000, heal: 40, mass: 50, consumable: 'stunned', boss: true, name: 'SUPREME HUNTER' },
+  infected: { r: 0.4, h: 1.7, hp: 4, score: 50, heal: 12, mass: 15, consumable: true },
+  soldier: { r: 0.4, h: 1.8, hp: 5, score: 100, heal: 25, mass: 20, consumable: true },
+  hunter: { r: 0.8, h: 2.4, hp: 30, score: 500, heal: 40, mass: 60, consumable: 'stunned' },
+  heli: { r: 2.4, h: 1.6, hp: 18, score: 800, flying: true },
+  boss: { r: 1.1, h: 3.4, hp: 160, score: 5000, heal: 40, mass: 50, consumable: 'stunned', boss: true, name: 'SUPREME HUNTER' },
   // Armoured: only the blade cuts it properly; other attacks do 40% damage.
-  behemoth: { w: 40, h: 46, hp: 260, score: 10000, heal: 50, mass: 60, consumable: 'stunned', boss: true, armored: true, name: 'THE BEHEMOTH' },
+  behemoth: { r: 1.8, h: 4.6, hp: 260, score: 10000, heal: 50, mass: 60, consumable: 'stunned', boss: true, armored: true, name: 'THE BEHEMOTH' },
 };
 
 export const isBoss = (e) => ENEMY_TYPES[e.type].boss === true;
 
 let nextId = 1;
 
-export function createEnemy(type, x, feetY, rng = Math.random) {
+export function createEnemy(type, x, y, z, rng = Math.random) {
   const def = ENEMY_TYPES[type];
   return {
     id: nextId++,
     type,
-    x: x - def.w / 2,
-    y: feetY - def.h,
-    w: def.w,
-    h: def.h,
+    x,
+    y,
+    z,
     vx: 0,
     vy: 0,
+    vz: 0,
+    r: def.r,
+    h: def.h,
     hp: def.hp,
     maxHp: def.hp,
-    facing: rng() < 0.5 ? -1 : 1,
+    yaw: rng() * Math.PI * 2,
     onGround: false,
     state: def.boss ? 'intro' : 'idle',
     t: def.boss ? 110 : 0,
     cooldown: 30 + Math.floor(rng() * 40),
     leapCd: 60,
     shootT: 40 + Math.floor(rng() * 40),
-    home: x,
-    speed: type === 'infected' ? 0.55 + rng() * 0.35 : 1,
+    home: { x, z },
+    speed: type === 'infected' ? 2.2 + rng() * 1.4 : 1,
     flash: 0,
     stagger: 0,
     grabbed: false,
@@ -45,6 +49,7 @@ export function createEnemy(type, x, feetY, rng = Math.random) {
     stunnedOnce: { 66: false, 33: false, 20: false },
     animT: Math.floor(rng() * 60),
     hitPlayer: false,
+    phase: 1,
   };
 }
 
@@ -53,43 +58,48 @@ export const isConsumable = (e) => {
   return !e.dead && (c === true || (c === 'stunned' && e.state === 'stunned'));
 };
 
-const sign = (v) => (v < 0 ? -1 : 1);
+const dt = STEP;
 
-function gravity(e, level) {
-  e.vy = Math.min(e.vy + PHYS.gravity, PHYS.maxFall);
-  moveBody(level, e);
+function physics(e, g) {
+  e.vy = Math.max(e.vy - PHYS.gravity * dt, -PHYS.maxFall);
+  moveBody(g.level, e, dt);
 }
 
-/** Is there floor just ahead of the enemy's leading foot? (So patrols don't walk off roofs.) */
-function groundAhead(level, e) {
-  const x = e.facing > 0 ? e.x + e.w + 2 : e.x - 2;
-  const c = Math.floor(x / TILE);
-  const r = Math.floor((e.y + e.h + 2) / TILE);
-  const t = tileAt(level, c, r);
-  return isSolid(t) || isLedge(t);
+function walk(e, speed) {
+  const f = dirOf(e.yaw);
+  e.vx = f.x * speed;
+  e.vz = f.z * speed;
 }
 
-/** Rough line of sight at eye level: sample the tiles between two bodies. */
+function stop(e) {
+  e.vx = e.vz = 0;
+}
+
+/** Is `target` within reach of e and roughly in front of it? */
+function inFront(e, target, reach, cone = 1.2) {
+  return distXZ(e, target) < reach + target.r && Math.abs(angleDiff(e.yaw, yawTo(e, target))) < cone && Math.abs(target.y - e.y) < e.h;
+}
+
+/** Line of sight between two bodies, eye to chest, blocked by any box. */
 export function canSee(level, a, b, range) {
-  const dx = centerX(b) - centerX(a);
-  const dy = centerY(b) - centerY(a);
-  if (Math.abs(dx) > range || Math.abs(dy) > 56) return false;
-  const steps = Math.ceil(Math.abs(dx) / 8);
-  for (let i = 1; i < steps; i++) {
-    const x = centerX(a) + (dx * i) / steps;
-    const y = a.y + 6 + (dy * i) / steps;
-    if (isSolid(tileAt(level, Math.floor(x / TILE), Math.floor(y / TILE)))) return false;
+  const d = distXZ(a, b);
+  if (d > range) return false;
+  const o = { x: a.x, y: a.y + a.h * 0.9, z: a.z };
+  const t = chest(b);
+  const dir = { x: t.x - o.x, y: t.y - o.y, z: t.z - o.z };
+  for (const box of boxesNear(level, Math.min(o.x, t.x), Math.max(o.x, t.x))) {
+    if (rayBox(o, dir, box) < 1) return false;
   }
   return true;
 }
 
-function nearest(from, list, range, maxDy = 40) {
+function nearest(from, list, range, maxDy = 4) {
   let best = null;
   let bestD = range;
   for (const o of list) {
     if (o === from || o.dead) continue;
-    const d = Math.abs(centerX(o) - centerX(from));
-    if (d < bestD && Math.abs(centerY(o) - centerY(from)) < maxDy) {
+    const d = distXZ(from, o);
+    if (d < bestD && Math.abs(o.y - from.y) < maxDy) {
       best = o;
       bestD = d;
     }
@@ -101,79 +111,82 @@ function updateInfected(e, g) {
   const p = g.player;
   if (e.stagger > 0) {
     e.stagger--;
+    e.vx *= 0.9;
+    e.vz *= 0.9;
   } else {
     const soldiers = g.enemies.filter((o) => o.type === 'soldier');
-    const candidates = p.alive ? [p, ...soldiers] : soldiers;
-    const target = nearest(e, candidates, 210, 60);
+    const target = nearest(e, p.alive ? [p, ...soldiers] : soldiers, 24, 6);
     if (!target) {
-      e.vx = e.facing * 0.3;
-      if (e.hitWall || !groundAhead(g.level, e) || Math.random() < 0.004) e.facing *= -1;
       e.state = 'idle';
-    } else {
-      const dx = centerX(target) - centerX(e);
-      const dy = centerY(target) - centerY(e);
-      if (e.state !== 'lunge') e.facing = sign(dx);
-      if (e.state === 'windup') {
-        e.vx = 0;
-        if (--e.t <= 0) {
-          e.state = 'lunge';
-          e.t = 10;
-          e.vx = e.facing * 2.4;
-          e.hitPlayer = false;
-        }
-      } else if (e.state === 'lunge') {
-        const reach = { x: e.facing > 0 ? e.x + e.w - 2 : e.x - 8, y: e.y + 4, w: 10, h: 12 };
-        if (!e.hitPlayer && overlaps(reach, target)) {
-          e.hitPlayer = true;
-          if (target === p) g.damagePlayer(7, centerX(e));
-          else g.damageEnemy(target, 2, e.facing * 1.5, -1, 'infected');
-        }
-        if (--e.t <= 0) {
-          e.state = 'chase';
-          e.cooldown = 40;
-        }
-      } else {
+      if (e.hitWall || Math.random() < 0.006) e.yaw += Math.PI * (0.5 + Math.random());
+      walk(e, 0.8);
+    } else if (e.state === 'windup') {
+      stop(e);
+      e.yaw = yawTo(e, target);
+      if (--e.t <= 0) {
+        e.state = 'lunge';
+        e.t = 10;
+        e.hitPlayer = false;
+        walk(e, 9);
+      }
+    } else if (e.state === 'lunge') {
+      if (!e.hitPlayer && inFront(e, target, 1.3)) {
+        e.hitPlayer = true;
+        if (target === p) g.damagePlayer(7, e);
+        else g.damageEnemy(target, 2, dirOf(e.yaw), 2, 'infected');
+      }
+      if (--e.t <= 0) {
         e.state = 'chase';
-        if (Math.abs(dx) < 16 && Math.abs(dy) < 18 && e.cooldown <= 0) {
-          e.state = 'windup';
-          e.t = 16;
-          e.vx = 0;
-        } else {
-          e.vx = e.facing * e.speed;
-          if (e.hitWall && e.onGround) e.vy = -5.4; // scramble over obstacles
-        }
+        e.cooldown = 40;
+      }
+    } else {
+      e.state = 'chase';
+      e.yaw = yawTo(e, target);
+      if (distXZ(e, target) < 1.6 && Math.abs(target.y - e.y) < 1.5 && e.cooldown <= 0) {
+        e.state = 'windup';
+        e.t = 16;
+        stop(e);
+      } else {
+        walk(e, e.speed);
+        if (e.hitWall && e.onGround) e.vy = 8; // scramble over obstacles
       }
     }
   }
-  gravity(e, g.level);
+  physics(e, g);
 }
 
 function updateSoldier(e, g) {
   const p = g.player;
   let target = null;
-  if (p.alive && g.soldiersHostile() && canSee(g.level, e, p, 180)) {
+  if (p.alive && g.soldiersHostile() && canSee(g.level, e, p, 32)) {
     target = p;
     g.spotted(e);
   } else {
     const threats = g.enemies.filter((o) => o.type === 'infected' || o.type === 'hunter' || isBoss(o));
-    target = nearest(e, threats, 160, 40);
+    target = nearest(e, threats, 22, 6);
   }
 
   if (e.stagger > 0) {
     e.stagger--;
+    e.vx *= 0.9;
+    e.vz *= 0.9;
   } else if (target) {
-    const dx = centerX(target) - centerX(e);
-    e.facing = sign(dx);
     e.state = 'aim';
+    e.yaw = yawTo(e, target);
     // Keep a little distance while firing.
-    const backOff = Math.abs(dx) < 40 && groundAheadBehind(g.level, e);
-    e.vx = backOff ? -e.facing * 0.7 : 0;
+    if (distXZ(e, target) < 6) walk(e, -2);
+    else stop(e);
     if (--e.shootT <= 0) {
-      const muzzleX = e.facing > 0 ? e.x + e.w + 8 : e.x - 8;
-      const muzzleY = e.y + 8;
-      const dist = Math.max(16, Math.abs(dx));
-      const vy = Math.max(-1.2, Math.min(1.2, ((centerY(target) - muzzleY) / dist) * 3.8));
-      g.spawnProjectile({ kind: 'bullet', x: muzzleX, y: muzzleY, w: 4, h: 2, vx: e.facing * 3.8, vy, life: 110, owner: 'soldier', dmg: 6 });
+      const f = dirOf(e.yaw);
+      const muzzle = { x: e.x + f.x * 0.7, y: e.y + 1.35, z: e.z + f.z * 0.7 };
+      const aim = chest(target);
+      const spread = 0.04;
+      const dx = aim.x - muzzle.x + (Math.random() - 0.5) * spread * 20;
+      const dy = aim.y - muzzle.y;
+      const dz = aim.z - muzzle.z + (Math.random() - 0.5) * spread * 20;
+      const len = Math.hypot(dx, dy, dz) || 1;
+      const speed = 42;
+      g.spawnProjectile({ kind: 'bullet', ...muzzle, vx: (dx / len) * speed, vy: (dy / len) * speed, vz: (dz / len) * speed, r: 0.15, life: 90, owner: 'soldier', dmg: 6 });
       g.sfx('shoot');
       e.shootT = 48 + Math.floor(Math.random() * 30);
       e.muzzle = 4;
@@ -181,64 +194,58 @@ function updateSoldier(e, g) {
   } else {
     e.state = 'patrol';
     if (e.shootT < 20) e.shootT = 20;
-    e.vx = e.facing * 0.45;
-    if (e.hitWall || !groundAhead(g.level, e)) e.facing = -e.facing;
-    else if (Math.abs(centerX(e) - e.home) > 56) e.facing = centerX(e) > e.home ? -1 : 1;
+    if (e.hitWall || Math.hypot(e.x - e.home.x, e.z - e.home.z) > 8) e.yaw = yawTo(e, e.home) + (Math.random() - 0.5);
+    // Rooftop guards stay on their roof.
+    const f = dirOf(e.yaw);
+    if (e.y > 0.5 && groundHeight(g.level, e.x + f.x * 1.2, e.z + f.z * 1.2, 0.1) < e.y - 0.5) e.yaw += Math.PI;
+    walk(e, 1.5);
   }
   if (e.muzzle > 0) e.muzzle--;
-  gravity(e, g.level);
-}
-
-function groundAheadBehind(level, e) {
-  const probe = { ...e, facing: -e.facing };
-  return groundAhead(level, probe);
+  physics(e, g);
 }
 
 function updateHunter(e, g) {
   const p = g.player;
   if (e.state === 'stunned') {
-    e.vx = 0;
+    stop(e);
     if (--e.t <= 0) {
       e.state = 'stalk';
       e.hp = Math.max(e.hp, Math.ceil(e.maxHp * 0.35));
     }
-    gravity(e, g.level);
-    return;
+    return physics(e, g);
   }
   if (e.stagger > 0) {
     e.stagger--;
-    gravity(e, g.level);
-    return;
+    e.vx *= 0.9;
+    e.vz *= 0.9;
+    return physics(e, g);
   }
   if (e.leapCd > 0) e.leapCd--;
   if (e.cooldown > 0) e.cooldown--;
-  const dx = centerX(p) - centerX(e);
-  const dy = centerY(p) - centerY(e);
-  const awake = Math.abs(dx) < 220 && p.alive;
+  const d = distXZ(e, p);
+  const awake = d < 30 && p.alive;
 
   switch (e.state) {
     case 'windup':
-      e.vx = 0;
+      stop(e);
       if (--e.t <= 0) {
         e.state = 'swipe';
         e.t = 8;
         e.hitPlayer = false;
       }
       break;
-    case 'swipe': {
-      const box = { x: e.facing > 0 ? e.x + e.w - 4 : e.x - 20, y: e.y + 4, w: 24, h: 22 };
-      if (!e.hitPlayer && overlaps(box, p)) {
+    case 'swipe':
+      if (!e.hitPlayer && inFront(e, p, 2.6)) {
         e.hitPlayer = true;
-        g.damagePlayer(14, centerX(e), 4);
+        g.damagePlayer(14, e, 9);
       }
       if (--e.t <= 0) {
         e.state = 'stalk';
         e.cooldown = 40;
       }
       break;
-    }
     case 'leap':
-      if (e.onGround && e.vy >= 0) {
+      if (e.onGround && e.vy <= 0) {
         e.state = 'stalk';
         g.shake(4);
         g.sfx('thud');
@@ -247,26 +254,26 @@ function updateHunter(e, g) {
     default:
       if (!awake) {
         e.state = 'idle';
-        e.vx = 0;
+        stop(e);
         break;
       }
       e.state = 'stalk';
-      e.facing = sign(dx);
-      e.vx = e.facing * 1.3;
-      if (Math.abs(dx) < 24 && Math.abs(dy) < 26 && e.cooldown <= 0) {
+      e.yaw = yawTo(e, p);
+      walk(e, 5);
+      if (d < 2.6 && Math.abs(p.y - e.y) < 2.5 && e.cooldown <= 0) {
         e.state = 'windup';
         e.t = 14;
-      } else if (Math.abs(dx) > 50 && Math.abs(dx) < 150 && e.onGround && e.leapCd <= 0) {
+      } else if (d > 6 && d < 18 && e.onGround && e.leapCd <= 0) {
         e.state = 'leap';
-        e.vy = -6.8;
-        e.vx = e.facing * 3.2;
+        e.vy = 12 + Math.max(0, p.y - e.y) * 0.8;
+        walk(e, Math.min(14, d * 1.1));
         e.leapCd = 110;
         g.sfx('roarSmall');
       } else if (e.hitWall && e.onGround) {
-        e.vy = -6.5;
+        e.vy = 11;
       }
   }
-  gravity(e, g.level);
+  physics(e, g);
 }
 
 function updateHeli(e, g) {
@@ -274,82 +281,96 @@ function updateHeli(e, g) {
   e.animT++;
   if (!g.soldiersHostile() || g.alert <= 0) e.leaving = true;
   if (e.leaving) {
-    e.vy = Math.max(e.vy - 0.08, -2.2);
-    e.x += e.vx;
-    e.y += e.vy;
-    if (e.y < g.camera.y - 80) e.dead = e.gone = true;
+    e.vy = Math.min(e.vy + 0.3, 14);
+    e.y += e.vy * dt;
+    e.x += e.vx * dt;
+    if (e.y > p.y + 80) e.dead = e.gone = true;
     return;
   }
-  const tx = centerX(p) + Math.sin(e.animT / 70) * 70 - e.w / 2;
-  const ty = g.camera.y + 48 + Math.sin(e.animT / 37) * 6; // below the HUD
-  e.vx = Math.max(-2.2, Math.min(2.2, e.vx + (tx - e.x) * 0.004));
-  e.vx *= 0.98;
-  e.vy = (ty - e.y) * 0.05;
-  e.x += e.vx;
-  e.y += e.vy;
-  e.facing = sign(centerX(p) - centerX(e));
+  // Circle the player out of reach, then hang off its shoulder to fire.
+  const a = e.animT / 150;
+  const tx = p.x + Math.cos(a) * 16;
+  const tz = p.z + Math.sin(a) * 16;
+  const ty = Math.max(p.y, groundHeight(g.level, p.x, p.z)) + 15;
+  e.vx = clamp((tx - e.x) * 1.2, -14, 14);
+  e.vz = clamp((tz - e.z) * 1.2, -14, 14);
+  e.vy = clamp((ty - e.y) * 2, -8, 8);
+  e.x += e.vx * dt;
+  e.y += e.vy * dt;
+  e.z += e.vz * dt;
+  e.yaw = yawTo(e, p);
   if (--e.shootT <= 0 && p.alive) {
-    const sx = centerX(e);
-    const sy = e.y + e.h;
-    const ang = Math.atan2(centerY(p) - sy, centerX(p) - sx);
-    g.spawnProjectile({ kind: 'rocket', x: sx, y: sy, w: 6, h: 3, vx: Math.cos(ang) * 2.4, vy: Math.sin(ang) * 2.4, life: 220, owner: 'heli', dmg: 16 });
+    const from = { x: e.x, y: e.y - 0.6, z: e.z };
+    const to = chest(p);
+    const len = Math.hypot(to.x - from.x, to.y - from.y, to.z - from.z) || 1;
+    const speed = 18;
+    g.spawnProjectile({ kind: 'rocket', ...from, vx: ((to.x - from.x) / len) * speed, vy: ((to.y - from.y) / len) * speed, vz: ((to.z - from.z) / len) * speed, r: 0.3, life: 240, owner: 'heli', dmg: 16 });
     g.sfx('rocket');
     e.shootT = 110;
   }
 }
 
+function bossPhase(e) {
+  const pct = e.hp / e.maxHp;
+  e.phase = pct > 0.66 ? 1 : pct > 0.33 ? 2 : 3;
+}
+
+function shockwave(g, e, speed, dmg) {
+  g.spawnProjectile({ kind: 'ring', x: e.x, y: e.y, z: e.z, radius: e.r, speed, life: 90, owner: e.type, dmg, vx: 0, vy: 0, vz: 0, r: 0 });
+}
+
 function updateBoss(e, g) {
   const p = g.player;
   e.animT++;
-  const pct = e.hp / e.maxHp;
-  e.phase = pct > 0.66 ? 1 : pct > 0.33 ? 2 : 3;
-  const dx = centerX(p) - centerX(e);
+  bossPhase(e);
+  const d = distXZ(e, p);
   if (e.cooldown > 0) e.cooldown--;
 
   switch (e.state) {
     case 'intro':
-      e.vx = 0;
-      if (e.t === 100) g.sfx('roar');
-      if (e.t === 100) g.shake(12);
+      stop(e);
+      e.yaw = yawTo(e, p);
+      if (e.t === 100) {
+        g.sfx('roar');
+        g.shake(12);
+      }
       if (--e.t <= 0) e.state = 'stalk';
       break;
     case 'stunned':
-      e.vx = 0;
+      stop(e);
       if (--e.t <= 0) e.state = 'stalk';
       break;
     case 'windup':
-      e.vx = 0;
+      stop(e);
       if (--e.t <= 0) {
         e.state = 'swipe';
         e.t = 10;
         e.hitPlayer = false;
       }
       break;
-    case 'swipe': {
-      const box = { x: e.facing > 0 ? e.x + e.w - 6 : e.x - 26, y: e.y + 6, w: 32, h: 30 };
-      if (!e.hitPlayer && overlaps(box, p)) {
+    case 'swipe':
+      if (!e.hitPlayer && inFront(e, p, 3.4)) {
         e.hitPlayer = true;
-        g.damagePlayer(18, centerX(e), 5);
+        g.damagePlayer(18, e, 11);
       }
       if (--e.t <= 0) {
         e.state = 'stalk';
         e.cooldown = 30;
       }
       break;
-    }
     case 'leap':
-      if (e.onGround && e.vy >= 0 && e.t-- <= 0) {
+      if (e.onGround && e.vy <= 0) {
+        stop(e);
         e.state = 'stalk';
         e.cooldown = 50 - e.phase * 8;
         g.shake(10);
         g.sfx('slam');
-        const groundY = e.y + e.h;
-        g.spawnProjectile({ kind: 'wave', x: centerX(e) - 6, y: groundY - 12, w: 12, h: 12, vx: -3, vy: 0, life: 120, owner: 'boss', dmg: 14 });
-        g.spawnProjectile({ kind: 'wave', x: centerX(e) - 6, y: groundY - 12, w: 12, h: 12, vx: 3, vy: 0, life: 120, owner: 'boss', dmg: 14 });
+        shockwave(g, e, 11 + e.phase, 14);
       }
       break;
     case 'chargeWindup':
-      e.vx = 0;
+      stop(e);
+      e.yaw = yawTo(e, p);
       if (--e.t <= 0) {
         e.state = 'charge';
         e.t = 90;
@@ -358,38 +379,39 @@ function updateBoss(e, g) {
       }
       break;
     case 'charge':
-      e.vx = e.facing * (4.2 + e.phase * 0.4);
-      if (!e.hitPlayer && overlaps(e, p)) {
+      walk(e, 16 + e.phase * 1.5);
+      if (!e.hitPlayer && distXZ(e, p) < e.r + p.r + 0.4 && Math.abs(p.y - e.y) < e.h) {
         e.hitPlayer = true;
-        g.damagePlayer(20, centerX(e), 6);
+        g.damagePlayer(20, e, 14);
       }
       if (e.hitWall) {
         e.state = 'stunned';
         e.t = 70;
+        stop(e);
         g.shake(12);
         g.sfx('slam');
       } else if (--e.t <= 0) e.state = 'stalk';
       break;
     default: {
       e.state = 'stalk';
-      e.facing = sign(dx);
-      e.vx = e.facing * [1.1, 1.4, 1.8][e.phase - 1];
+      e.yaw = yawTo(e, p);
+      walk(e, [4.5, 5.5, 7][e.phase - 1]);
       if (e.cooldown > 0) break;
       const roll = Math.random();
-      if (Math.abs(dx) < 34) {
+      if (d < 3.4) {
         e.state = 'windup';
         e.t = e.phase === 3 ? 10 : 16;
       } else if (roll < 0.4) {
+        // Leap at the player: up for about 0.8 s, landing where they stand.
         e.state = 'leap';
-        e.t = 2;
-        e.vy = -8;
-        e.vx = Math.max(-3.6, Math.min(3.6, dx / 40));
+        e.vy = 13.6;
+        walk(e, Math.min(18, d / 0.8));
         g.sfx('roarSmall');
       } else if (e.phase >= 2 && roll < 0.7) {
         e.state = 'chargeWindup';
         e.t = 30;
       } else if (e.phase >= 2 && roll < 0.85) {
-        g.summonInfected(2 + e.phase - 2);
+        g.summonInfected(e.phase);
         g.sfx('roar');
         e.cooldown = 90;
       } else {
@@ -397,23 +419,23 @@ function updateBoss(e, g) {
       }
     }
   }
-  gravity(e, g.level);
+  physics(e, g);
 }
 
-// The Behemoth: slow, armoured, and fights at range. Ground pounds send shockwaves both ways
-// (and from phase 2 bring rubble down from above), acid spit arcs at you, and from phase 2
-// spikes burst out of the street where it marks the ground.
+// The Behemoth: slow, armoured, and dangerous at range. Ground pounds send out a shockwave ring
+// (and from phase 2 bring rubble down from the sky), acid spit arcs toward you, and from phase 2
+// it marks the street where spikes are about to burst up.
 function updateBehemoth(e, g) {
   const p = g.player;
   e.animT++;
-  const pct = e.hp / e.maxHp;
-  e.phase = pct > 0.66 ? 1 : pct > 0.33 ? 2 : 3;
-  const dx = centerX(p) - centerX(e);
+  bossPhase(e);
+  const d = distXZ(e, p);
   if (e.cooldown > 0) e.cooldown--;
 
   switch (e.state) {
     case 'intro':
-      e.vx = 0;
+      stop(e);
+      e.yaw = yawTo(e, p);
       if (e.t === 100) {
         g.sfx('roar');
         g.shake(16);
@@ -421,43 +443,39 @@ function updateBehemoth(e, g) {
       if (--e.t <= 0) e.state = 'stalk';
       break;
     case 'stunned':
-      e.vx = 0;
+      stop(e);
       if (--e.t <= 0) e.state = 'stalk';
       break;
     case 'windup':
-      e.vx = 0;
+      stop(e);
       if (--e.t <= 0) {
         e.state = 'swipe';
         e.t = 12;
         e.hitPlayer = false;
       }
       break;
-    case 'swipe': {
-      const box = { x: e.facing > 0 ? e.x + e.w - 8 : e.x - 34, y: e.y + 10, w: 42, h: 36 };
-      if (!e.hitPlayer && overlaps(box, p)) {
+    case 'swipe':
+      if (!e.hitPlayer && inFront(e, p, 4.6, 1.4)) {
         e.hitPlayer = true;
-        g.damagePlayer(22, centerX(e), 6);
+        g.damagePlayer(22, e, 13);
       }
       if (--e.t <= 0) {
         e.state = 'stalk';
         e.cooldown = 36;
       }
       break;
-    }
     case 'pound':
-      e.vx = 0;
+      stop(e);
       if (--e.t <= 0) {
         g.shake(14);
         g.sfx('quake');
-        const groundY = e.y + e.h;
-        for (const dir of [-1, 1]) {
-          g.spawnProjectile({ kind: 'wave', x: centerX(e) - 6 + dir * 16, y: groundY - 12, w: 12, h: 12, vx: dir * 3.2, vy: 0, life: 130, owner: 'behemoth', dmg: 16 });
-        }
+        shockwave(g, e, 10, 16);
         if (e.phase >= 2) {
           const n = 2 + e.phase;
           for (let i = 0; i < n; i++) {
-            const x = centerX(p) + (i - (n - 1) / 2) * 42 + (Math.random() - 0.5) * 16;
-            g.spawnProjectile({ kind: 'rock', x: x - 5, y: g.camera.y - 24 - i * 22, w: 10, h: 10, vx: 0, vy: 0.5, life: 260, owner: 'behemoth', dmg: 14 });
+            const a = (i / n) * Math.PI * 2 + Math.random();
+            const r = i === 0 ? 0 : 2.5 + Math.random() * 3;
+            g.spawnProjectile({ kind: 'rock', x: p.x + Math.cos(a) * r, y: p.y + 26 + i * 4, z: p.z + Math.sin(a) * r, vx: 0, vy: -4, vz: 0, r: 0.7, life: 300, owner: 'behemoth', dmg: 14 });
           }
         }
         e.state = 'stalk';
@@ -465,13 +483,31 @@ function updateBehemoth(e, g) {
       }
       break;
     case 'spit':
-      e.vx = 0;
+      stop(e);
+      e.yaw = yawTo(e, p);
       if (--e.t <= 0) {
         const n = e.phase === 3 ? 5 : 3;
-        const mouthX = centerX(e) + e.facing * 16;
+        const f = dirOf(e.yaw);
+        const mouth = { x: e.x + f.x * 1.8, y: e.y + 3.4, z: e.z + f.z * 1.8 };
         for (let i = 0; i < n; i++) {
-          const vx = Math.max(-4.6, Math.min(4.6, dx / 46)) + (i - (n - 1) / 2) * 0.7;
-          g.spawnProjectile({ kind: 'acid', x: mouthX - 3, y: e.y + 8, w: 6, h: 6, vx, vy: -4.2 - (i % 2) * 0.7, gravity: 0.18, life: 200, owner: 'behemoth', dmg: 12 });
+          // Lob each glob to land near the player in about a second, fanned out sideways.
+          const spread = (i - (n - 1) / 2) * 2.2;
+          const tx = p.x - f.z * spread;
+          const tz = p.z + f.x * spread;
+          const T = 1;
+          const gy = 18;
+          g.spawnProjectile({
+            kind: 'acid',
+            ...mouth,
+            vx: (tx - mouth.x) / T,
+            vy: (p.y - mouth.y) / T + 0.5 * gy * T,
+            vz: (tz - mouth.z) / T,
+            gravity: gy,
+            r: 0.35,
+            life: 200,
+            owner: 'behemoth',
+            dmg: 12,
+          });
         }
         g.sfx('spit');
         e.state = 'stalk';
@@ -479,14 +515,15 @@ function updateBehemoth(e, g) {
       }
       break;
     case 'spikes':
-      e.vx = 0;
+      stop(e);
       if (--e.t <= 0) {
-        const n = e.phase === 3 ? 5 : 3;
+        const n = e.phase === 3 ? 6 : 4;
         for (let i = 0; i < n; i++) {
-          const x = centerX(p) + (i - (n - 1) / 2) * 44;
-          const col = Math.floor(x / TILE);
-          const groundY = surfaceRow(g.level, col) * TILE;
-          g.spawnProjectile({ kind: 'spike', x: x - 6, y: groundY - 30, w: 12, h: 30, vx: 0, vy: 0, t: 0, warn: 44, life: 74, owner: 'behemoth', dmg: 16 });
+          const a = (i / n) * Math.PI * 2;
+          const r = i === 0 ? 0 : 3.2;
+          const x = p.x + Math.cos(a) * r;
+          const z = p.z + Math.sin(a) * r;
+          g.spawnProjectile({ kind: 'spike', x, y: groundHeight(g.level, x, z), z, vx: 0, vy: 0, vz: 0, r: 1.1, t: 0, warn: 44, life: 76, owner: 'behemoth', dmg: 16 });
         }
         g.sfx('spikeWarn');
         e.state = 'stalk';
@@ -495,11 +532,11 @@ function updateBehemoth(e, g) {
       break;
     default: {
       e.state = 'stalk';
-      e.facing = sign(dx);
-      e.vx = e.facing * [0.6, 0.8, 1.0][e.phase - 1];
+      e.yaw = yawTo(e, p);
+      walk(e, [2.4, 3, 3.6][e.phase - 1]);
       if (e.cooldown > 0) break;
       const roll = Math.random();
-      if (Math.abs(dx) < 46) {
+      if (d < 4.6) {
         e.state = 'windup';
         e.t = e.phase === 3 ? 12 : 18;
       } else if (roll < 0.35) {
@@ -518,7 +555,7 @@ function updateBehemoth(e, g) {
       }
     }
   }
-  gravity(e, g.level);
+  physics(e, g);
 }
 
 export function updateEnemy(e, g) {
@@ -526,7 +563,7 @@ export function updateEnemy(e, g) {
   if (e.flash > 0) e.flash--;
   if (e.cooldown > 0 && !isBoss(e) && e.type !== 'hunter') e.cooldown--;
   if (e.grabbed) {
-    e.vx = 0;
+    stop(e);
     return;
   }
   switch (e.type) {

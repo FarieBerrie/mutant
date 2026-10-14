@@ -1,183 +1,216 @@
-import { GROUND_ROW, ROWS, TILE } from './config.js';
+// Seeded 3D city: ten districts in a row along +x, each a stretch of avenue lined with buildings
+// on both sides (a front row on the avenue and a back row behind an alley). Everything solid is
+// an axis-aligned box, and every building can be wall-run. Arenas are walled plazas whose walls
+// can't be climbed; all but the last open at the far end once their boss is dead.
+import { WORLD } from './config.js';
 import { createRng } from './rng.js';
 
-export const T = { EMPTY: 0, GROUND: 1, WALL: 2, ROOF: 3, LEDGE: 4, CAR: 5, HIVE: 6, FENCE: 7 };
-const SOLID = [false, true, true, true, false, true, true, true];
-export const isSolid = (tile) => SOLID[tile] === true;
-export const isLedge = (tile) => tile === T.LEDGE;
-
-// The run through the city, left to right. Spawn counts are per district. Arenas hold a boss;
-// the far wall of every arena but the last opens once its boss is dead. `gunship` districts
-// call in a helicopter at high alert.
-export const DISTRICTS = [
-  { name: 'MIDTOWN', cols: 56, theme: 'dusk', heights: [3, 7], gaps: [3, 7], soldiers: 5, infected: 3, hunters: 0, cars: 0.6, gunship: true },
-  { name: 'INFECTED ZONE', cols: 60, theme: 'infected', heights: [4, 8], gaps: [3, 6], soldiers: 2, infected: 8, hunters: 1, cars: 0.4, ambient: 5, gunship: true },
-  { name: 'MILITARY BASE', cols: 56, theme: 'military', heights: [2, 5], gaps: [4, 8], soldiers: 10, infected: 2, hunters: 1, fences: true, gunship: true },
-  { name: 'THE HIVE', cols: 50, theme: 'hive', heights: [3, 8], gaps: [3, 6], soldiers: 0, infected: 6, hunters: 2, hive: true, ambient: 6 },
-  { name: 'SUPREME HUNTER', cols: 34, theme: 'arena', arena: true, boss: 'boss' },
-  { name: 'HARBOR', cols: 58, theme: 'harbor', heights: [2, 5], gaps: [3, 6], styles: ['container'], soldiers: 7, infected: 4, hunters: 1, cranes: true, gunship: true },
-  { name: 'TOXIC REFINERY', cols: 58, theme: 'toxic', heights: [3, 7], gaps: [3, 6], styles: ['industrial'], soldiers: 3, infected: 8, hunters: 2, stacks: true, ambient: 6 },
-  { name: 'FINANCIAL DISTRICT', cols: 60, theme: 'storm', heights: [5, 9], gaps: [3, 5], styles: ['glass', 'glass', 'concrete'], soldiers: 8, infected: 3, hunters: 1, cars: 0.5, gunship: true },
-  { name: 'QUARANTINE WALL', cols: 58, theme: 'dawn', heights: [2, 5], gaps: [4, 8], styles: ['concrete', 'tan'], soldiers: 12, infected: 3, hunters: 2, fences: true, gunship: true },
-  { name: 'THE BEHEMOTH', cols: 36, theme: 'lair', arena: true, boss: 'behemoth' },
-];
-
+export const FLOOR = 4; // metres per storey
+const CELL = 16; // the collision grid buckets boxes by x
+const ARENA_WALL = 60;
 const BUILDING_STYLES = ['brick', 'concrete', 'tan', 'glass'];
-// Styles without windows, signs or rooftop clutter.
-const PLAIN_STYLES = new Set(['hive', 'container', 'industrial']);
 const NEON = ['#ff2050', '#3cbcfc', '#f8b800', '#58d854', '#e040fb'];
+const CAR_COLORS = ['#c82020', '#2060d0', '#e0a820', '#d0d0d0', '#208040', '#202024'];
 
-export function tileAt(level, c, r) {
-  if (c < 0 || c >= level.cols) return T.WALL; // the edges of the map are walls
-  if (r < 0) return T.EMPTY;
-  if (r >= level.rows) return T.GROUND;
-  return level.tiles[r * level.cols + c];
-}
-
-function setTile(level, c, r, tile) {
-  if (c >= 0 && c < level.cols && r >= 0 && r < level.rows) level.tiles[r * level.cols + c] = tile;
-}
-
-/** Row of the first solid tile from the top in column c (where things stand). */
-export function surfaceRow(level, c) {
-  for (let r = 0; r < level.rows; r++) if (isSolid(tileAt(level, c, r))) return r;
-  return level.rows;
-}
+// The run through the city. Spawn counts are per district. `gunship` districts call in a
+// helicopter at high alert; `ambient` districts keep infected wandering in.
+export const DISTRICTS = [
+  { name: 'MIDTOWN', length: 140, theme: 'dusk', floors: [3, 9], soldiers: 5, infected: 3, hunters: 0, cars: 6, gunship: true },
+  { name: 'INFECTED ZONE', length: 150, theme: 'infected', floors: [4, 10], soldiers: 2, infected: 9, hunters: 1, cars: 5, ambient: 5, gunship: true },
+  { name: 'MILITARY BASE', length: 140, theme: 'military', floors: [2, 5], soldiers: 11, infected: 2, hunters: 1, fences: true, gunship: true },
+  { name: 'THE HIVE', length: 130, theme: 'hive', floors: [3, 9], styles: ['hive'], soldiers: 0, infected: 7, hunters: 2, hive: true, ambient: 6 },
+  { name: 'SUPREME HUNTER', length: 80, theme: 'arena', arena: true, boss: 'boss' },
+  { name: 'HARBOR', length: 140, theme: 'harbor', floors: [2, 5], styles: ['container'], soldiers: 7, infected: 4, hunters: 1, cranes: true, containers: true, gunship: true },
+  { name: 'TOXIC REFINERY', length: 140, theme: 'toxic', floors: [3, 8], styles: ['industrial'], soldiers: 3, infected: 9, hunters: 2, stacks: true, ambient: 6 },
+  { name: 'FINANCIAL DISTRICT', length: 150, theme: 'storm', floors: [7, 12], styles: ['glass', 'glass', 'concrete'], soldiers: 8, infected: 3, hunters: 1, cars: 6, gunship: true },
+  { name: 'QUARANTINE WALL', length: 140, theme: 'dawn', floors: [2, 5], styles: ['concrete', 'tan'], soldiers: 13, infected: 3, hunters: 2, fences: true, gunship: true },
+  { name: 'THE BEHEMOTH', length: 90, theme: 'lair', arena: true, boss: 'behemoth' },
+];
 
 export function buildLevel(seed = 1985) {
   const rng = createRng(seed);
-  const cols = DISTRICTS.reduce((sum, d) => sum + d.cols, 0);
+  const W = WORLD.halfWidth;
+  const A = WORLD.avenue;
+  const length = DISTRICTS.reduce((sum, d) => sum + d.length, 0);
   const level = {
-    cols,
-    rows: ROWS,
-    tiles: new Uint8Array(cols * ROWS),
-    width: cols * TILE,
-    height: ROWS * TILE,
-    districts: [],
-    buildings: [],
+    seed,
+    length,
+    halfWidth: W,
+    avenue: A,
+    boxes: [],
     decor: [],
     spawns: [],
     checkpoints: [],
+    districts: [],
     arenas: [],
+    cells: [],
+    playerStart: { x: 4, y: 0, z: 0 },
   };
 
-  // Street everywhere: there are no bottomless pits in this city.
-  for (let c = 0; c < cols; c++) for (let r = GROUND_ROW; r < ROWS; r++) setTile(level, c, r, T.GROUND);
-
-  const placeBuilding = (c0, w, h, style) => {
-    const top = GROUND_ROW - h;
-    for (let c = c0; c < c0 + w; c++) {
-      for (let r = top; r < GROUND_ROW; r++) setTile(level, c, r, style === 'hive' ? T.HIVE : r === top ? T.ROOF : T.WALL);
-    }
-    level.buildings.push({ c0, c1: c0 + w - 1, top, style });
-    if (PLAIN_STYLES.has(style)) return;
-    // Neon signs hang on some facades.
-    if (h >= 4 && rng.chance(0.4)) {
-      level.decor.push({ kind: 'neon', x: (c0 + rng.int(0, Math.max(0, w - 3))) * TILE + 4, y: (top + rng.int(1, h - 3)) * TILE + 4, color: rng.pick(NEON), w: rng.int(22, 34) });
-    }
-    // Rooftop clutter: water towers and antennas (decoration only).
-    if (w >= 5 && rng.chance(0.45)) {
-      level.decor.push({ kind: rng.chance(0.6) ? 'tower' : 'antenna', x: (c0 + rng.int(1, w - 3)) * TILE, y: top * TILE });
-    }
+  const addBox = (x0, x1, y0, y1, z0, z1, props) => {
+    const box = { id: level.boxes.length, x0, x1, y0, y1, z0: Math.min(z0, z1), z1: Math.max(z0, z1), ...props };
+    level.boxes.push(box);
+    return box;
   };
+  const clearOf = (x0, x1, z0, z1) => !level.boxes.some((b) => b.x0 < x1 && b.x1 > x0 && b.z0 < z1 && b.z1 > z0);
 
-  let start = 0;
+  let x0 = 0;
   for (const [index, d] of DISTRICTS.entries()) {
-    const x0 = start * TILE;
-    const end = start + d.cols;
-    level.districts.push({ name: d.name, theme: d.theme, x0, x1: end * TILE, ambient: d.ambient || 0, gunship: !!d.gunship });
-    level.checkpoints.push(x0 + TILE * 2);
+    const x1 = x0 + d.length;
+    level.districts.push({ name: d.name, theme: d.theme, x0, x1, ambient: d.ambient || 0, gunship: !!d.gunship });
+    level.checkpoints.push({ x: x0 + 6, z: 0 });
 
     if (d.arena) {
-      // A sealed pit: a tall wall at the far end; the camera locks the near side. The last
-      // arena is the end of the map; the others' walls are gates that open on the boss's death.
+      // A walled plaza. The near side stays open until the fight starts; the camera can't
+      // leave once it has, and the walls can't be climbed.
       const final = index === DISTRICTS.length - 1;
-      for (let r = 0; r < GROUND_ROW; r++) {
-        setTile(level, end - 1, r, T.WALL);
-        setTile(level, end - 2, r, T.WALL);
-      }
-      const wall = { c0: end - 2, c1: end - 1, top: 0, style: 'concrete', gate: !final };
-      level.buildings.push(wall);
-      level.arenas.push({ x0, x1: end * TILE, boss: d.boss, final, wall });
-      start = end;
+      for (const side of [-1, 1]) addBox(x0, x1, 0, ARENA_WALL, side * 28, side * (W + 2), { kind: 'wall', style: 'wall', noClimb: true });
+      const wall = addBox(x1 - 3, x1, 0, ARENA_WALL, -W - 2, W + 2, { kind: 'wall', style: 'wall', noClimb: true, gate: !final });
+      level.arenas.push({ x0, x1, boss: d.boss, final, wall, open: false });
+      x0 = x1;
       continue;
     }
 
-    let c = start + 5; // open street at each district start (checkpoint)
-    while (c < end - 6) {
-      const w = rng.int(4, 8);
-      const h = rng.int(d.heights[0], d.heights[1]);
-      if (c + w > end - 3) break;
-      placeBuilding(c, w, h, d.hive ? 'hive' : rng.pick(d.styles || BUILDING_STYLES));
-      if (d.stacks && rng.chance(0.6)) level.decor.push({ kind: 'stack', x: (c + rng.int(1, w - 2)) * TILE, y: (GROUND_ROW - h) * TILE });
-      c += w;
-
-      const gap = rng.int(d.gaps[0], d.gaps[1]);
-      const g0 = c;
-      c += gap;
-      // Street furniture in the gap
-      if (gap >= 4 && d.cars && rng.chance(d.cars)) {
-        const cc = g0 + rng.int(1, gap - 3);
-        setTile(level, cc, GROUND_ROW - 1, T.CAR);
-        setTile(level, cc + 1, GROUND_ROW - 1, T.CAR);
-      }
-      if (d.fences && gap >= 3 && rng.chance(0.7)) setTile(level, g0 + Math.floor(gap / 2), GROUND_ROW - 1, T.FENCE);
-      if (d.cranes && gap >= 4 && rng.chance(0.5)) level.decor.push({ kind: 'crane', x: (g0 + Math.floor(gap / 2)) * TILE, y: GROUND_ROW * TILE, flip: rng.chance(0.5) });
-      if (d.hive && rng.chance(0.6)) {
-        const hc = g0 + rng.int(0, gap - 1);
-        const hh = rng.int(1, 2);
-        for (let r = GROUND_ROW - hh; r < GROUND_ROW; r++) setTile(level, hc, r, T.HIVE);
-      }
-      // Scaffolding between tall buildings: one-way platforms
-      if (gap >= 4 && rng.chance(0.55)) {
-        const row = GROUND_ROW - rng.int(3, 5);
-        const pc = g0 + rng.int(1, gap - 3);
-        for (let k = 0; k < 2; k++) setTile(level, pc + k, row, T.LEDGE);
+    const styles = d.styles || BUILDING_STYLES;
+    const front = []; // front-row buildings, for rooftop soldiers and signs
+    for (const side of [-1, 1]) {
+      let x = x0 + 4;
+      while (x < x1 - 10) {
+        let w = rng.int(12, 24);
+        if (x + w > x1 - 4) w = x1 - 4 - x;
+        if (w < 8) break;
+        const zNear = A + 3 + rng.int(0, 2);
+        const depth = rng.int(10, 16);
+        const style = rng.pick(styles);
+        const h = rng.int(d.floors[0], d.floors[1]) * FLOOR;
+        const b = addBox(x, x + w, 0, h, side * zNear, side * (zNear + depth), { kind: 'building', style, side, tint: rng.range(0.82, 1.08) });
+        front.push(b);
+        // Back row, across an alley
+        const zBack = zNear + depth + rng.int(5, 8);
+        if (W - 1 - zBack >= 6) {
+          const hb = rng.int(d.floors[0] + 1, d.floors[1] + 2) * FLOOR;
+          const inset = rng.int(0, 2);
+          addBox(x + inset, x + w - inset, 0, hb, side * zBack, side * (W - 1), { kind: 'building', style: rng.pick(styles), side, tint: rng.range(0.82, 1.08) });
+        }
+        // Signs, water towers, antennas and smokestacks
+        if (style !== 'hive' && style !== 'container' && h >= 12 && rng.chance(0.5)) {
+          level.decor.push({ kind: 'neon', x: x + rng.range(2, w - 6), y: rng.range(5, h - 4), z: side * zNear, side, w: rng.range(3, 5), color: rng.pick(NEON) });
+        }
+        if (BUILDING_STYLES.includes(style) && w >= 14 && rng.chance(0.45)) {
+          level.decor.push({ kind: rng.chance(0.6) ? 'tower' : 'antenna', x: x + rng.range(3, w - 3), y: h, z: side * (zNear + rng.range(3, depth - 3)) });
+        }
+        if (d.stacks && rng.chance(0.6)) level.decor.push({ kind: 'stack', x: x + rng.range(2, w - 2), y: h, z: side * (zNear + depth / 2) });
+        if (d.cranes && rng.chance(0.4)) level.decor.push({ kind: 'crane', x: x + w + 3, y: 0, z: side * (zNear + depth + 2), flip: side });
+        x += w + rng.int(5, 10);
       }
     }
 
-    // Enemies, placed on whatever surface is at their column.
-    const place = (type, count, { street = false } = {}) => {
+    // Things in the street
+    const lane = () => (rng.chance(0.5) ? -1 : 1) * rng.range(2.5, A - 2.5);
+    for (let i = 0; i < (d.cars || 0); i++) {
+      const cx = rng.range(x0 + 16, x1 - 10);
+      const cz = lane();
+      if (clearOf(cx - 3, cx + 3, cz - 2, cz + 2)) addBox(cx - 2.2, cx + 2.2, 0, 1.5, cz - 1, cz + 1, { kind: 'car', color: rng.pick(CAR_COLORS) });
+    }
+    if (d.fences) {
+      // Fence lines across the avenue, each with a gap to run through
+      for (let fx = x0 + 30; fx < x1 - 15; fx += rng.int(28, 40)) {
+        const gap = rng.range(-A + 3, A - 3);
+        addBox(fx, fx + 0.3, 0, 2.6, -A - 3, gap - 2.5, { kind: 'fence' });
+        addBox(fx, fx + 0.3, 0, 2.6, gap + 2.5, A + 3, { kind: 'fence' });
+      }
+    }
+    if (d.containers) {
+      for (let i = 0; i < 7; i++) {
+        const cx = rng.range(x0 + 14, x1 - 10);
+        const cz = (rng.chance(0.5) ? -1 : 1) * rng.range(4, A - 1.5);
+        if (!clearOf(cx - 4, cx + 4, cz - 2, cz + 2)) continue;
+        const stack = rng.int(1, 2);
+        for (let k = 0; k < stack; k++) addBox(cx - 3, cx + 3, k * 2.6, (k + 1) * 2.6, cz - 1.2, cz + 1.2, { kind: 'container', color: rng.pick(['#b0302a', '#2a5a9a', '#d08a20', '#3a7a4a', '#7a7a80']) });
+      }
+    }
+    if (d.hive) {
+      for (let i = 0; i < 7; i++) {
+        const cx = rng.range(x0 + 14, x1 - 8);
+        const cz = rng.range(-A + 2, A - 2);
+        const s = rng.range(1.5, 3);
+        if (clearOf(cx - s, cx + s, cz - s, cz + s)) addBox(cx - s, cx + s, 0, s * 1.4, cz - s, cz + s, { kind: 'hive' });
+      }
+    }
+    if (d.theme !== 'hive') {
+      for (let lx = x0 + 8; lx < x1 - 4; lx += 20) for (const side of [-1, 1]) level.decor.push({ kind: 'lamp', x: lx, y: 0, z: side * (A + 1.5) });
+    }
+
+    // Enemies. Soldiers sometimes stand guard on front-row roofs.
+    const place = (type, count, roofChance = 0) => {
       for (let i = 0; i < count; i++) {
-        let col;
-        let tries = 0;
-        do {
-          col = rng.int(start + 6, end - 3);
-          tries++;
-        } while (street && surfaceRow(level, col) < GROUND_ROW && tries < 20);
-        if (col < 14) continue; // keep the starting street clear
-        const row = surfaceRow(level, col);
-        level.spawns.push({ type, x: col * TILE + TILE / 2, y: row * TILE });
+        const roofs = front.filter((b) => b.x0 >= x0 && b.x1 <= x1 && b.style !== 'hive');
+        if (roofChance && roofs.length && rng.chance(roofChance)) {
+          const b = rng.pick(roofs);
+          level.spawns.push({ type, x: rng.range(b.x0 + 2, b.x1 - 2), y: b.y1, z: rng.range(b.z0 + 2, b.z1 - 2) });
+          continue;
+        }
+        const x = rng.range(Math.max(x0 + 12, 25), x1 - 8);
+        const z = rng.range(-A + 1.5, A - 1.5);
+        level.spawns.push({ type, x, y: 0, z });
       }
     };
-    place('soldier', d.soldiers || 0);
-    place('infected', d.infected || 0, { street: true });
-    place('hunter', d.hunters || 0, { street: true });
+    place('soldier', d.soldiers || 0, 0.35);
+    place('infected', d.infected || 0);
+    place('hunter', d.hunters || 0);
 
-    start = end;
+    x0 = x1;
   }
 
-  // Street lamps along open sidewalks (not in the hive or the arenas).
-  for (const d of level.districts) {
-    if (d.theme === 'hive' || d.theme === 'arena' || d.theme === 'lair') continue;
-    for (let c = d.x0 / TILE + 3; c < d.x1 / TILE - 2; c += 7) {
-      if (surfaceRow(level, c) === GROUND_ROW && surfaceRow(level, c + 1) === GROUND_ROW) {
-        level.decor.push({ kind: 'lamp', x: c * TILE + 8, y: GROUND_ROW * TILE });
-      }
+  rebuildGrid(level);
+  // Spawns that landed on a car or a container stand on top of it.
+  for (const s of level.spawns) if (s.y === 0) s.y = groundHeight(level, s.x, s.z, 0.4, 5);
+  level.spawns.sort((a, b) => a.x - b.x);
+  return level;
+}
+
+function rebuildGrid(level) {
+  level.cells = Array.from({ length: Math.ceil(level.length / CELL) + 1 }, () => []);
+  for (const b of level.boxes) {
+    const c0 = Math.max(0, Math.floor(b.x0 / CELL));
+    const c1 = Math.min(level.cells.length - 1, Math.floor(b.x1 / CELL));
+    for (let c = c0; c <= c1; c++) level.cells[c].push(b);
+  }
+}
+
+let stamp = 0;
+/** Every box overlapping the x range [xa, xb], each once. */
+export function boxesNear(level, xa, xb) {
+  stamp++;
+  const out = [];
+  const c0 = Math.max(0, Math.floor(xa / CELL));
+  const c1 = Math.min(level.cells.length - 1, Math.floor(xb / CELL));
+  for (let c = c0; c <= c1; c++) {
+    for (const b of level.cells[c]) {
+      if (b._seen === stamp) continue;
+      b._seen = stamp;
+      out.push(b);
     }
   }
+  return out;
+}
 
-  level.spawns.sort((a, b) => a.x - b.x);
-  level.playerStart = { x: TILE * 2, y: GROUND_ROW * TILE };
-  return level;
+/** Height of the highest surface under a square footprint, no higher than `below` (default: any). */
+export function groundHeight(level, x, z, r = 0, below = Infinity) {
+  let top = 0;
+  for (const b of boxesNear(level, x - r, x + r)) {
+    if (b.y1 > below + 0.01 || b.y1 <= top) continue;
+    if (x + r > b.x0 && x - r < b.x1 && z + r > b.z0 && z - r < b.z1) top = b.y1;
+  }
+  return top;
 }
 
 /** Knocks down an arena's far wall so the run can continue. */
 export function openArena(level, arena) {
-  const { wall } = arena;
-  for (let c = wall.c0; c <= wall.c1; c++) for (let r = 0; r < GROUND_ROW; r++) setTile(level, c, r, T.EMPTY);
-  level.buildings = level.buildings.filter((b) => b !== wall);
+  arena.wall.removed = true;
   arena.open = true;
+  level.boxes = level.boxes.filter((b) => b !== arena.wall);
+  rebuildGrid(level);
 }
 
 export function districtAt(level, x) {

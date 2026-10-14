@@ -1,129 +1,138 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { GROUND_ROW, TILE } from '../src/config.js';
 import { createBot } from '../src/bot.js';
 import { createEnemy } from '../src/enemies.js';
-import { buildLevel, isSolid, T, tileAt } from '../src/level.js';
+import { buildLevel, groundHeight } from '../src/level.js';
 import { createRng } from '../src/rng.js';
-import { placeOnOpenStreet, quietGame, step } from './helpers.js';
+import { openStreet, placePlayer, quietGame, step } from './helpers.js';
 
-const feet = (b) => b.y + b.h;
-
-describe('level', () => {
+describe('city', () => {
   const level = buildLevel(1985);
 
   test('is deterministic', () => {
-    assert.deepEqual(buildLevel(1985).tiles, level.tiles);
-  });
-
-  test('has street under every column (no pits)', () => {
-    for (let c = 0; c < level.cols; c++) assert.equal(tileAt(level, c, GROUND_ROW), T.GROUND, `column ${c}`);
+    const again = buildLevel(1985);
+    assert.deepEqual(
+      again.boxes.map((b) => [b.x0, b.x1, b.y1, b.z0, b.z1]),
+      level.boxes.map((b) => [b.x0, b.x1, b.y1, b.z0, b.z1]),
+    );
   });
 
   test('has ten districts, two boss arenas and enemies to fight', () => {
     assert.equal(level.districts.length, 10);
     assert.deepEqual(level.arenas.map((a) => a.boss), ['boss', 'behemoth']);
     assert.deepEqual(level.arenas.map((a) => a.final), [false, true]);
-    for (const a of level.arenas) assert.ok(a.x1 > a.x0);
-    assert.ok(level.spawns.filter((s) => s.type === 'soldier').length >= 10);
-    assert.ok(level.buildings.length >= 15);
+    assert.ok(level.spawns.filter((s) => s.type === 'soldier').length >= 30);
+    assert.ok(level.boxes.filter((b) => b.kind === 'building').length >= 100);
   });
 
-  test('spawns stand on solid ground, not inside walls', () => {
+  test('the avenue at the start is open street', () => {
+    for (let x = 0; x < 12; x++) assert.equal(groundHeight(level, x, 0, 1), 0);
+  });
+
+  test('spawns stand on something, not inside it', () => {
     for (const s of level.spawns) {
-      const c = Math.floor(s.x / TILE);
-      assert.ok(isSolid(tileAt(level, c, s.y / TILE)), `${s.type} at ${s.x} needs ground`);
-      assert.ok(!isSolid(tileAt(level, c, s.y / TILE - 1)), `${s.type} at ${s.x} is inside a wall`);
+      assert.equal(groundHeight(level, s.x, s.z, 0.3, s.y), s.y, `${s.type} at ${s.x.toFixed(1)}, ${s.z.toFixed(1)}`);
+      const inside = level.boxes.some((b) => s.x > b.x0 && s.x < b.x1 && s.z > b.z0 && s.z < b.z1 && s.y + 0.5 > b.y0 && s.y + 0.5 < b.y1);
+      assert.ok(!inside, `${s.type} at ${s.x.toFixed(1)}, ${s.z.toFixed(1)} is inside a box`);
     }
   });
 });
 
 describe('movement', () => {
-  test('lands on the street and stays there', () => {
+  test('stands on the street', () => {
     const { game, input } = quietGame();
-    step(game, input, 300);
-    assert.equal(feet(game.player), GROUND_ROW * TILE);
+    step(game, input, 60);
+    assert.equal(game.player.y, 0);
     assert.ok(game.player.onGround);
+  });
+
+  test('runs where you push, in any direction', () => {
+    const { game, input } = quietGame();
+    const p = placePlayer(game, openStreet(game, 25));
+    const x0 = p.x;
+    input.hold('up');
+    step(game, input, 60);
+    assert.ok(p.x - x0 > 7, `ran ${p.x - x0} m`);
+    input.release('up');
+    input.hold('right');
+    const z0 = p.z;
+    step(game, input, 30);
+    assert.ok(p.z - z0 > 3);
   });
 
   test('runs up a building and onto the roof', () => {
     const { game, input } = quietGame();
-    const b = game.level.buildings.find((bd) => bd.c0 > 4 && bd.style !== 'hive');
-    const p = game.player;
-    p.x = b.c0 * TILE - 40;
-    p.y = GROUND_ROW * TILE - p.h;
+    const b = game.level.boxes.find((bx) => bx.kind === 'building' && bx.side === 1 && bx.x0 > 20 && bx.y1 >= 16);
+    const p = placePlayer(game, (b.x0 + b.x1) / 2, b.z0 - 3);
     input.hold('right');
     let onRoof = false;
-    step(game, input, 120, () => {
-      if (p.onGround && feet(p) === b.top * TILE && p.x > b.c0 * TILE - p.w) onRoof = true;
+    step(game, input, 240, () => {
+      if (p.onGround && p.ground === b) onRoof = true;
     });
-    assert.ok(onRoof, 'should climb the wall and land on the roof');
+    assert.ok(onRoof, `should climb ${b.y1} m and land on the roof; ended at y=${p.y.toFixed(1)}`);
   });
 
   test('double jump goes higher than a single jump', () => {
     const peak = (double) => {
       const { game, input } = quietGame();
-      step(game, input, 60);
-      const start = game.player.y;
-      let min = start;
+      step(game, input, 30);
+      let top = 0;
       input.tap('jump');
-      step(game, input, 60, (i) => {
+      step(game, input, 80, (i) => {
         input.hold('jump');
-        if (double && i === 12) input.tap('jump');
-        min = Math.min(min, game.player.y);
+        if (double && i === 20) input.tap('jump');
+        top = Math.max(top, game.player.y);
       });
-      return start - min;
+      return top;
     };
-    assert.ok(peak(true) > peak(false) + 20);
+    assert.ok(peak(true) > peak(false) + 1.5);
+  });
+
+  test('gliding falls slowly', () => {
+    const fallTime = (glide) => {
+      const { game, input } = quietGame();
+      const p = game.player;
+      p.y = 30;
+      let frames = 0;
+      step(game, input, 600, () => {
+        if (glide) input.hold('jump');
+        if (!p.onGround) frames++;
+      });
+      return frames;
+    };
+    assert.ok(fallTime(true) > fallTime(false) * 3);
   });
 
   test('dash covers ground quickly', () => {
     const { game, input } = quietGame();
-    placeOnOpenStreet(game, 120);
-    step(game, input, 30);
-    const x0 = game.player.x;
+    const p = placePlayer(game, openStreet(game, 25));
+    step(game, input, 5);
+    const x0 = p.x;
     input.tap('dash');
     step(game, input, 10);
-    assert.ok(game.player.x - x0 > 45);
+    assert.ok(p.x - x0 > 4);
+  });
+
+  test("arena walls can't be climbed", () => {
+    const { game, input } = quietGame();
+    const a = game.level.arenas[0];
+    const p = placePlayer(game, a.x0 + 20, 25);
+    input.hold('right');
+    step(game, input, 180);
+    assert.ok(p.y < 1, `climbed to ${p.y}`);
   });
 });
 
 describe('combat', () => {
-  function withEnemy(type, dx = 18) {
+  function withEnemy(type, dx = 1.6) {
     const ctx = quietGame();
-    placeOnOpenStreet(ctx.game, 240);
-    step(ctx.game, ctx.input, 30);
-    const p = ctx.game.player;
-    const e = createEnemy(type, p.x + p.w / 2 + dx, feet(p));
+    const p = placePlayer(ctx.game, openStreet(ctx.game, 20));
+    step(ctx.game, ctx.input, 5);
+    const e = createEnemy(type, p.x + dx, 0, p.z);
+    e.yaw = Math.PI;
     ctx.game.enemies.push(e);
     return { ...ctx, e, p };
   }
-
-  test('blade: a slash then a heavier cleave', () => {
-    const { game, input, e } = withEnemy('hunter', 24);
-    input.tap('p5');
-    step(game, input, 1);
-    assert.equal(game.player.power, 'blade');
-    input.tap('attack');
-    step(game, input, 8);
-    input.tap('attack'); // queue the cleave
-    step(game, input, 50);
-    assert.equal(e.hp, e.maxHp - 3 - 5);
-  });
-
-  test('blade slashes cut bullets out of the air', () => {
-    const { game, input, p } = withEnemy('infected', 200);
-    input.tap('p5');
-    step(game, input, 1);
-    // Far enough out that it meets the slash, not the player, when it arrives.
-    const bullet = { kind: 'bullet', x: p.x + p.w + 32, y: p.y + 6, w: 4, h: 2, vx: -3.8, vy: 0, life: 110, owner: 'soldier', dmg: 6 };
-    game.projectiles.push(bullet);
-    const hp = p.hp;
-    input.tap('attack');
-    step(game, input, 12);
-    assert.ok(!game.projectiles.includes(bullet), 'the bullet is gone');
-    assert.equal(p.hp, hp, 'and it never reached the player');
-  });
 
   test('punches kill an infected and score points', () => {
     const { game, input, e } = withEnemy('infected');
@@ -136,8 +145,17 @@ describe('combat', () => {
     assert.ok(game.player.mass > 0);
   });
 
+  test('attacks turn to face a target beside you', () => {
+    const { game, input, p, e } = withEnemy('infected', 0);
+    e.x = p.x;
+    e.z = p.z + 1.4;
+    input.tap('attack');
+    step(game, input, 10);
+    assert.ok(e.hp < e.maxHp);
+  });
+
   test('claws hit harder than fists', () => {
-    const { game, input, e } = withEnemy('hunter', 24);
+    const { game, input, e } = withEnemy('hunter', 2);
     input.tap('p2');
     step(game, input, 1);
     input.tap('attack');
@@ -145,8 +163,34 @@ describe('combat', () => {
     assert.equal(e.hp, e.maxHp - 3);
   });
 
+  test('blade: a slash then a heavier cleave', () => {
+    const { game, input, e } = withEnemy('hunter', 2.2);
+    input.tap('p5');
+    step(game, input, 1);
+    assert.equal(game.player.power, 'blade');
+    input.tap('attack');
+    step(game, input, 8);
+    input.tap('attack');
+    step(game, input, 50);
+    assert.equal(e.hp, e.maxHp - 3 - 5);
+  });
+
+  test('blade slashes cut bullets out of the air', () => {
+    const { game, input, p } = withEnemy('infected', 30);
+    input.tap('p5');
+    step(game, input, 1);
+    // Far enough out that it meets the slash, not the player.
+    const bullet = { kind: 'bullet', x: p.x + 6, y: p.y + 1.2, z: p.z, vx: -42, vy: 0, vz: 0, r: 0.15, life: 90, owner: 'soldier', dmg: 6 };
+    game.projectiles.push(bullet);
+    const hp = p.hp;
+    input.tap('attack');
+    step(game, input, 12);
+    assert.ok(!game.projectiles.includes(bullet), 'the bullet is gone');
+    assert.equal(p.hp, hp, 'and it never reached the player');
+  });
+
   test('consuming an unseen soldier heals and grants a disguise', () => {
-    const { game, input, e, p } = withEnemy('soldier', 14);
+    const { game, input, e, p } = withEnemy('soldier', 1.2);
     p.hp = 40;
     input.tap('consume');
     step(game, input, 30);
@@ -157,34 +201,34 @@ describe('combat', () => {
   });
 
   test('disguised: soldiers hold fire; a superhuman move nearby blows it', () => {
-    const { game, input, p } = withEnemy('soldier', 14);
+    const { game, input, p } = withEnemy('soldier', 1.2);
     input.tap('consume');
     step(game, input, 30);
     assert.equal(p.disguised, true);
 
-    const watcher = createEnemy('soldier', p.x + 80, feet(p));
+    const watcher = createEnemy('soldier', p.x + 8, 0, p.z);
     game.enemies.push(watcher);
     step(game, input, 200);
     assert.equal(game.projectiles.filter((pr) => pr.kind === 'bullet').length, 0, 'no shots at a disguised player');
 
     input.tap('jump');
-    step(game, input, 8, () => input.hold('jump'));
+    step(game, input, 10, () => input.hold('jump'));
     input.tap('jump'); // double jump is superhuman
     step(game, input, 2);
     assert.equal(p.disguised, false);
     assert.equal(game.alert, 100);
   });
 
-  test('soldiers shoot an undisguised player', () => {
-    const { game, input, p } = withEnemy('soldier', 90);
+  test('soldiers shoot an undisguised player they can see', () => {
+    const { game, input, p } = withEnemy('soldier', 12);
     const hp = p.hp;
-    step(game, input, 240);
+    step(game, input, 300);
     assert.ok(p.hp < hp);
   });
 
   test('devastator hits everything nearby', () => {
-    const { game, input, p } = withEnemy('infected', 30);
-    game.enemies.push(createEnemy('infected', p.x - 40, feet(p)));
+    const { game, input, p } = withEnemy('infected', 3);
+    game.enemies.push(createEnemy('infected', p.x - 4, 0, p.z + 2));
     p.mass = 100;
     input.tap('dev');
     step(game, input, 45);
@@ -193,8 +237,8 @@ describe('combat', () => {
   });
 
   test('dying and respawning at the checkpoint', () => {
-    const { game, input, p } = withEnemy('infected', 200);
-    game.damagePlayer(500, p.x + 20);
+    const { game, p } = withEnemy('infected', 20);
+    game.damagePlayer(500, { x: p.x + 1, z: p.z });
     assert.equal(game.mode, 'dead');
     game.respawn();
     assert.equal(game.mode, 'play');
@@ -204,78 +248,62 @@ describe('combat', () => {
 });
 
 describe('boss arenas', () => {
-  test('entering the arena locks the camera and wakes the Supreme Hunter', () => {
-    const { game, input } = quietGame();
-    const a = game.level.arenas[0];
-    const p = game.player;
-    p.x = a.x0 + TILE * 6;
-    p.y = GROUND_ROW * TILE - p.h;
-    step(game, input, 120);
-    assert.ok(game.arenaLocked);
-    assert.ok(game.boss && !game.boss.dead);
-    assert.equal(game.boss.type, 'boss');
-    assert.ok(game.camera.x >= a.x0);
-    // You can't leave the arena the way you came.
-    input.hold('left');
-    step(game, input, 120);
-    assert.ok(p.x >= a.x0);
-  });
-
-  test('beating the Supreme Hunter opens the way on instead of ending the game', () => {
-    const { game, input } = quietGame();
-    const a = game.level.arenas[0];
-    const p = game.player;
-    p.x = a.x0 + TILE * 6;
-    step(game, input, 2);
-    game.damageEnemy(game.boss, 1000, 0, 0, 'player');
-    step(game, input, 200);
-    assert.equal(game.mode, 'play');
-    assert.equal(game.arenaLocked, false);
-    assert.ok(a.open);
-    // Walk out through where the wall was, into the Harbor.
-    input.hold('right');
-    step(game, input, 240);
-    assert.ok(p.x > a.x1, `player stuck at ${p.x}, gate at ${a.x1}`);
-    assert.equal(game.level.districts[game.district].name, 'HARBOR');
-    // A respawn doesn't bring the Supreme Hunter back.
-    game.respawn();
-    step(game, input, 60);
-    assert.ok(!game.arenaLocked);
-  });
-
-  function inFinalArena() {
+  function enterArena(index) {
     const ctx = quietGame();
-    const a = ctx.game.level.arenas[1];
-    ctx.game.player.x = a.x0 + TILE * 6;
-    ctx.game.player.y = GROUND_ROW * TILE - ctx.game.player.h;
+    const a = ctx.game.level.arenas[index];
+    placePlayer(ctx.game, a.x0 + 12, 0);
     step(ctx.game, ctx.input, 2);
     return { ...ctx, a, boss: ctx.game.boss };
   }
 
+  test("entering the arena wakes the Supreme Hunter, and you can't leave", () => {
+    const { game, input, a, boss } = enterArena(0);
+    assert.ok(game.arenaLocked);
+    assert.equal(boss.type, 'boss');
+    input.hold('down');
+    step(game, input, 120);
+    assert.ok(game.player.x >= a.x0);
+  });
+
+  test('beating the Supreme Hunter opens the way on instead of ending the game', () => {
+    const { game, input, a, boss } = enterArena(0);
+    game.damageEnemy(boss, 1000, { x: 1, z: 0 }, 0, 'player');
+    step(game, input, 200);
+    assert.equal(game.mode, 'play');
+    assert.equal(game.arenaLocked, false);
+    assert.ok(a.open);
+    const p = game.player;
+    input.hold('up');
+    step(game, input, 600);
+    assert.ok(p.x > a.x1, `stuck at ${p.x.toFixed(1)}, the gate was at ${a.x1}`);
+    assert.equal(game.level.districts[game.district].name, 'HARBOR');
+    game.respawn();
+    step(game, input, 60);
+    assert.ok(!game.arenaLocked, "the Supreme Hunter doesn't come back");
+  });
+
   test('the Behemoth waits in the last arena; beating it wins the game', () => {
-    const { game, input, boss } = inFinalArena();
+    const { game, input, boss } = enterArena(1);
     assert.equal(boss.type, 'behemoth');
-    game.damageEnemy(boss, 1000, 0, 0, 'blade');
-    assert.ok(boss.dead);
+    game.damageEnemy(boss, 1000, { x: 1, z: 0 }, 0, 'blade');
     step(game, input, 200);
     assert.equal(game.mode, 'victory');
     assert.ok(game.score >= 10000);
   });
 
   test("the Behemoth's armour blunts everything but the blade", () => {
-    const { game, boss } = inFinalArena();
+    const { game, boss } = enterArena(1);
     boss.state = 'stalk';
-    game.damageEnemy(boss, 10, 0, 0, 'player');
+    game.damageEnemy(boss, 10, { x: 1, z: 0 }, 0, 'player');
     assert.equal(boss.hp, boss.maxHp - 4);
-    game.damageEnemy(boss, 10, 0, 0, 'blade');
+    game.damageEnemy(boss, 10, { x: 1, z: 0 }, 0, 'blade');
     assert.equal(boss.hp, boss.maxHp - 14);
   });
 
   test('the Behemoth pounds, spits acid and raises spikes that hurt', () => {
-    const { game, input, boss } = inFinalArena();
+    const { game, input, boss } = enterArena(1);
     const p = game.player;
-    const homeX = boss.x;
-    p.invuln = 0;
+    const home = { x: boss.x, z: boss.z };
     boss.hp = boss.maxHp * 0.5; // phase 2: every attack is unlocked
     boss.stunnedOnce[66] = true;
     const kinds = new Set();
@@ -283,27 +311,43 @@ describe('boss arenas', () => {
     // The Behemoth picks attacks at random; a fixed seed keeps the test repeatable.
     const random = Math.random;
     Math.random = createRng(7).next;
-    step(game, input, 1200, () => {
-      boss.x = homeX; // held at range, where it uses its ranged attacks
+    step(game, input, 1500, () => {
+      boss.x = home.x; // held at range, where it uses its ranged attacks
+      boss.z = home.z;
       for (const pr of game.projectiles) kinds.add(pr.kind);
       if (p.hp < 100) hurt = true;
-      p.hp = 100; // keep the test going
+      p.hp = 100;
       p.alive = true;
       game.mode = 'play';
     });
     Math.random = random;
-    for (const kind of ['wave', 'rock', 'acid', 'spike']) assert.ok(kinds.has(kind), `never used ${kind}; saw ${[...kinds]}`);
+    for (const kind of ['ring', 'rock', 'acid', 'spike']) assert.ok(kinds.has(kind), `never used ${kind}; saw ${[...kinds]}`);
     assert.ok(hurt);
   });
 
-  test('stunned at 66% and consumable, like the Supreme Hunter', () => {
-    const { game, input, boss } = inFinalArena();
-    game.damageEnemy(boss, boss.maxHp * 0.36, 0, 0, 'blade');
+  test('jumping clears a shockwave ring', () => {
+    const { game, input, boss } = enterArena(1);
+    const p = game.player;
+    boss.state = 'stunned';
+    boss.t = 9999;
+    game.spawnProjectile({ kind: 'ring', x: p.x - 6, y: 0, z: p.z, radius: 1, speed: 10, life: 90, dmg: 16, vx: 0, vy: 0, vz: 0, r: 0 });
+    const hp = p.hp;
+    // The ring reaches the player after about 28 frames; jump a moment before.
+    step(game, input, 90, (i) => {
+      if (i === 20) input.tap('jump');
+      if (i > 20) input.hold('jump');
+    });
+    assert.equal(p.hp, hp);
+  });
+
+  test('bosses are stunned at 66% and can be consumed', () => {
+    const { game, input, boss } = enterArena(1);
+    game.damageEnemy(boss, boss.maxHp * 0.36, { x: 1, z: 0 }, 0, 'blade');
     assert.equal(boss.state, 'stunned');
     const p = game.player;
-    p.x = boss.x - p.w - 4;
-    p.y = boss.y + boss.h - p.h;
-    p.facing = 1;
+    p.x = boss.x - boss.r - p.r - 0.6;
+    p.z = boss.z;
+    p.yaw = 0;
     const hp = boss.hp;
     input.tap('consume');
     step(game, input, 30);
@@ -311,24 +355,21 @@ describe('boss arenas', () => {
   });
 });
 
-describe('the new districts', () => {
-  test('can be crossed from the Harbor to the last arena', () => {
-    // The autopilot, made invulnerable, has to find a way over everything the generator built.
+describe('the whole run', () => {
+  test('the autopilot can cross every district and beat both bosses', () => {
+    // Invulnerable, so this checks the city can be crossed, not the bot's skill.
     const bot = createBot();
     const { game } = quietGame();
     game.input = bot;
+    game.spawnCursor = 0;
     bot.attach(game);
-    const harbor = game.level.districts.findIndex((d) => d.name === 'HARBOR');
-    game.checkpoint = harbor;
-    game.bossesDefeated.add(0);
-    game.reset();
-    const finalArena = game.level.arenas[1];
-    for (let i = 0; i < 60 * 240 && !game.arenaLocked; i++) {
+    for (let i = 0; i < 60 * 60 * 10 && game.mode !== 'victory'; i++) {
       game.player.invuln = 10;
       game.player.hp = 100;
       bot.update();
       game.update();
     }
-    assert.ok(game.arenaLocked && game.arena === finalArena, `stuck at x=${Math.round(game.player.x)} in ${game.level.districts[game.district].name}`);
+    assert.equal(game.mode, 'victory', `stuck at x=${game.player.x.toFixed(1)} in ${game.level.districts[game.district].name}`);
+    assert.ok(game.kills > 20);
   });
 });
