@@ -55,32 +55,52 @@ function hudBar(ctx, x, y, w, h, frac, color, { trail = null, glowing = false } 
 function drawPortrait(ctx, x, y, p, t) {
   ctx.fillStyle = vGradient(ctx, y, y + 22, ['#3a2a4a', '#1a1424']);
   ctx.fillRect(x, y, 22, 22);
+  // Hood down: bunched grey round the shoulders, black jacket below
+  ctx.fillStyle = '#18181e';
+  ctx.fillRect(x + 2, y + 18, 18, 4);
+  ctx.fillStyle = '#7c7c84';
+  ctx.beginPath();
+  ctx.ellipse(x + 11, y + 18.5, 8.5, 2.6, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#5a5a62';
+  ctx.fillRect(x + 7, y + 17, 8, 1);
+  // Neck, face and ears
+  ctx.fillStyle = '#7a4630';
+  ctx.fillRect(x + 9, y + 14, 4, 3);
+  ctx.fillStyle = '#9a5e40';
+  ctx.beginPath();
+  ctx.ellipse(x + 11, y + 10.5, 5, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillRect(x + 5, y + 9.5, 1, 3);
+  ctx.fillRect(x + 16, y + 9.5, 1, 3);
+  // The fade: solid black on top, thinning to skin down the sides
+  ctx.fillStyle = '#0a0a0c';
+  ctx.beginPath();
+  ctx.ellipse(x + 11, y + 7, 5.4, 3.6, 0, Math.PI, 0);
+  ctx.fill();
+  ctx.fillRect(x + 5.6, y + 6.5, 10.8, 1.2);
+  const fade = ctx.createLinearGradient(0, y + 7, 0, y + 11);
+  fade.addColorStop(0, 'rgba(10,10,12,0.95)');
+  fade.addColorStop(1, 'rgba(10,10,12,0)');
+  ctx.fillStyle = fade;
+  ctx.fillRect(x + 5.6, y + 7, 1.6, 4);
+  ctx.fillRect(x + 14.8, y + 7, 1.6, 4);
+  // Brows, eyes (glowing red when powers are out), nose, mouth
+  ctx.fillStyle = '#0a0a0c';
+  ctx.fillRect(x + 7.5, y + 8.6, 2.5, 0.6);
+  ctx.fillRect(x + 12, y + 8.6, 2.5, 0.6);
+  const eye = p.disguised ? '#58d854' : p.dev > 0 || p.attack ? '#ff2050' : '#f0ece4';
+  ctx.fillStyle = eye;
+  ctx.fillRect(x + 8, y + 9.6, 1.6, 0.8);
+  ctx.fillRect(x + 12.4, y + 9.6, 1.6, 0.8);
+  if (eye === '#ff2050') additive(ctx, () => glow(ctx, x + 11, y + 10, 6, eye, 0.6));
+  ctx.fillStyle = '#7a4630';
+  ctx.fillRect(x + 10.4, y + 10.5, 1.2, 2);
+  ctx.fillStyle = '#4a2018';
+  ctx.fillRect(x + 9.4, y + 13.6, 3.2, 0.6);
   ctx.strokeStyle = p.hp < 30 ? (Math.floor(t / 8) % 2 ? '#ff2050' : '#801020') : '#8a8aa0';
   ctx.lineWidth = 1;
   ctx.strokeRect(x + 0.5, y + 0.5, 21, 21);
-  ctx.fillStyle = '#6a6a72';
-  ctx.beginPath();
-  ctx.moveTo(x + 4, y + 21);
-  ctx.lineTo(x + 5, y + 7);
-  ctx.quadraticCurveTo(x + 11, y + 1, x + 17, y + 7);
-  ctx.lineTo(x + 18, y + 21);
-  ctx.fill();
-  ctx.fillStyle = '#0c0a10';
-  ctx.beginPath();
-  ctx.moveTo(x + 7, y + 21);
-  ctx.lineTo(x + 7.5, y + 9);
-  ctx.quadraticCurveTo(x + 11, y + 6, x + 14.5, y + 9);
-  ctx.lineTo(x + 15, y + 21);
-  ctx.fill();
-  ctx.fillStyle = '#b06a50';
-  ctx.fillRect(x + 9, y + 12, 4, 6);
-  const eye = p.disguised ? '#58d854' : p.dev > 0 || p.attack ? '#ff2050' : '#e8e0d8';
-  ctx.fillStyle = eye;
-  ctx.fillRect(x + 9.5, y + 13.5, 1, 0.5);
-  ctx.fillRect(x + 11.5, y + 13.5, 1, 0.5);
-  if (eye === '#ff2050') additive(ctx, () => glow(ctx, x + 11, y + 14, 5, eye, 0.6));
-  ctx.fillStyle = '#c82020';
-  ctx.fillRect(x + 4, y + 19, 4, 2);
 }
 
 function powerIcon(ctx, x, y, power, armor) {

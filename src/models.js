@@ -4,10 +4,30 @@
 // pose*() functions set target angles; smoothPose() eases the real angles toward them so limbs
 // blend between poses instead of snapping.
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { ATTACKS } from './player.js';
 
 const scratch = new THREE.Color();
+const scratch2 = new THREE.Color();
+const OUTLINE = 0.022; // metres: the dark rim around every character
+
+/**
+ * A dark rim drawn behind each character: the mesh's back faces, pushed out along smoothed
+ * normals. It gives the low-poly shapes a crisp silhouette against the city.
+ */
+const outlineMaterial = new THREE.MeshBasicMaterial({ color: 0x07060a, side: THREE.BackSide });
+outlineMaterial.onBeforeCompile = (shader) => {
+  shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>\n  transformed += normalize(normal) * ${OUTLINE.toFixed(3)};`);
+};
+
+/** The outline's geometry: positions only, welded, with smooth normals so corners don't split. */
+function outlineGeometry(geo) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', geo.attributes.position.clone());
+  const welded = mergeVertices(g, 1e-4);
+  welded.computeVertexNormals();
+  return welded;
+}
 
 /** Collects coloured shapes per pivot, then merges them. */
 class Builder {
@@ -29,14 +49,31 @@ class Builder {
     return g;
   }
 
-  add(pivot, geometry, color, { x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, glow = false } = {}) {
+  /**
+   * fade: [topColour, bottomColour, from, to] blends from bottomColour (at the shape's local
+   * height `from`, 0..1 of its height) to topColour (at `to`): hair fades, painted gradients.
+   */
+  add(pivot, geometry, color, { x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, glow = false, fade = null } = {}) {
     const g = geometry.index ? geometry.toNonIndexed() : geometry;
     g.deleteAttribute('uv');
+    const pos = g.attributes.position;
+    const colors = new Float32Array(pos.count * 3);
+    scratch.set(color);
+    if (fade) {
+      g.computeBoundingBox();
+      const { min, max } = g.boundingBox;
+      const [top, bottom, from, to] = fade;
+      for (let i = 0; i < pos.count; i++) {
+        const h = (pos.getY(i) - min.y) / Math.max(1e-6, max.y - min.y);
+        const k = Math.min(1, Math.max(0, (h - from) / Math.max(1e-6, to - from)));
+        scratch.set(bottom).lerp(scratch2.set(top), k);
+        colors.set([scratch.r, scratch.g, scratch.b], i * 3);
+      }
+    } else {
+      for (let i = 0; i < colors.length; i += 3) colors.set([scratch.r, scratch.g, scratch.b], i);
+    }
     if (rx || ry || rz) g.applyMatrix4(new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(rx, ry, rz)));
     g.translate(x, y, z);
-    scratch.set(color);
-    const colors = new Float32Array(g.attributes.position.count * 3);
-    for (let i = 0; i < colors.length; i += 3) colors.set([scratch.r, scratch.g, scratch.b], i);
     g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     this.parts.get(pivot)[glow ? 'glow' : 'solid'].push(g);
   }
@@ -46,21 +83,25 @@ class Builder {
   }
 
   /** A tapered cylinder standing on y (rTop at the top end). */
-  cyl(pivot, rTop, rBottom, h, x, y, z, color, { sides = 7, ...opts } = {}) {
+  cyl(pivot, rTop, rBottom, h, x, y, z, color, { sides = 10, ...opts } = {}) {
     this.add(pivot, new THREE.CylinderGeometry(rTop, rBottom, h, sides), color, { x, y, z, ...opts });
   }
 
-  cone(pivot, r, h, x, y, z, color, { sides = 5, ...opts } = {}) {
+  cone(pivot, r, h, x, y, z, color, { sides = 7, ...opts } = {}) {
     this.add(pivot, new THREE.ConeGeometry(r, h, sides), color, { x, y, z, ...opts });
   }
 
   ball(pivot, r, x, y, z, color, opts = {}) {
-    this.add(pivot, new THREE.IcosahedronGeometry(r, 1), color, { x, y, z, ...opts });
+    this.add(pivot, new THREE.IcosahedronGeometry(r, 2), color, { x, y, z, ...opts });
   }
 
   done(parts) {
     for (const [pivot, { solid, glow }] of this.parts) {
-      if (solid.length) pivot.add(new THREE.Mesh(mergeGeometries(solid), this.solid));
+      if (solid.length) {
+        const merged = mergeGeometries(solid);
+        pivot.add(new THREE.Mesh(merged, this.solid));
+        pivot.add(new THREE.Mesh(outlineGeometry(merged), outlineMaterial));
+      }
       if (glow.length) pivot.add(new THREE.Mesh(mergeGeometries(glow), this.glowMaterial));
     }
     for (const p of this.pivots) p.userData.rest = p.position.clone();
@@ -134,6 +175,9 @@ export function buildHero() {
   const JACKET = '#1c1c22';
   const HOOD = '#7c7c84';
   const JEANS = '#2040a0';
+  const SKIN = '#9a5e40';
+  const SKIN_D = '#7a4630';
+  const HAIR = '#0a0a0c';
   const [hipL, kneeL] = leg(b, b.body, { y: 0.95, z: -0.11, thigh: 0.48, shin: 0.44, rHip: 0.1, rKnee: 0.08, rAnkle: 0.065, pants: JEANS, shoe: '#18181c', sole: '#e8e8e8' });
   const [hipR, kneeR] = leg(b, b.body, { y: 0.95, z: 0.11, thigh: 0.48, shin: 0.44, rHip: 0.1, rKnee: 0.08, rAnkle: 0.065, pants: JEANS, shoe: '#18181c', sole: '#e8e8e8' });
   const torso = b.pivot(b.body, 0, 0.96, 0);
@@ -142,14 +186,31 @@ export function buildHero() {
   b.box(torso, 0.025, 0.4, 0.15, 0.145, 0.33, 0, '#c8c8cc'); // hoodie front
   b.box(torso, 0.03, 0.4, 0.012, 0.16, 0.33, 0, '#4a4a50'); // zip
   b.box(torso, 0.29, 0.07, 0.1, 0, 0.56, -0.18, '#d82800'); // red stripe
-  b.box(torso, 0.18, 0.16, 0.34, -0.12, 0.6, 0, HOOD); // hood bunched at the neck
-  const head = b.pivot(torso, 0.02, 0.62, 0);
-  b.box(head, 0.32, 0.26, 0.3, 0, 0.12, 0, HOOD);
-  b.cyl(head, 0.15, 0.15, 0.3, -0.01, 0.25, 0, HOOD, { rx: Math.PI / 2, sides: 8 }); // rounded top of the hood
-  b.box(head, 0.06, 0.22, 0.2, 0.14, 0.11, 0, '#060608'); // face in shadow
-  b.box(head, 0.03, 0.08, 0.11, 0.16, 0.03, 0, '#c86c50'); // chin
-  b.box(head, 0.02, 0.025, 0.04, 0.18, 0.13, 0.045, '#ffffff', { glow: true });
-  b.box(head, 0.02, 0.025, 0.04, 0.18, 0.13, -0.045, '#ffffff', { glow: true });
+  // The hood is down: bunched in a thick roll round the back of the neck and over the shoulders.
+  b.cyl(torso, 0.2, 0.23, 0.16, -0.06, 0.62, 0, HOOD, { sides: 12 });
+  b.box(torso, 0.16, 0.22, 0.36, -0.16, 0.56, 0, HOOD);
+  b.box(torso, 0.05, 0.14, 0.3, -0.24, 0.5, 0, '#5a5a62'); // the hood's inside
+  b.cyl(torso, 0.07, 0.08, 0.1, 0.02, 0.66, 0, SKIN_D, { sides: 10 }); // neck
+  const head = b.pivot(torso, 0.02, 0.7, 0);
+  // Head: a rounded skull, jaw and face
+  b.add(head, new THREE.SphereGeometry(0.135, 14, 10), SKIN, { y: 0.14, x: -0.005 });
+  b.box(head, 0.2, 0.12, 0.22, 0.02, 0.04, 0, SKIN); // jaw
+  b.box(head, 0.09, 0.05, 0.18, 0.08, -0.01, 0, SKIN_D); // chin and jawline
+  b.box(head, 0.05, 0.06, 0.04, 0.14, 0.11, 0, SKIN_D); // nose
+  b.box(head, 0.02, 0.012, 0.07, 0.125, 0.045, 0, '#4a2018'); // mouth
+  b.box(head, 0.02, 0.018, 0.05, 0.125, 0.165, 0.048, HAIR); // brows
+  b.box(head, 0.02, 0.018, 0.05, 0.125, 0.165, -0.048, HAIR);
+  for (const z of [-0.13, 0.13]) b.box(head, 0.05, 0.07, 0.03, -0.01, 0.11, z, SKIN_D); // ears
+  // A black fade: full on top, shaved down to skin on the sides and back
+  // Short hair on top, tilted back so the hairline sits high on the forehead
+  b.add(head, new THREE.SphereGeometry(0.139, 14, 8, 0, Math.PI * 2, 0, Math.PI * 0.42), HAIR, { y: 0.16, x: -0.03, rz: 0.55 });
+  // The fade round the sides and back: dark at the top, down to skin above the ears
+  b.add(head, new THREE.CylinderGeometry(0.139, 0.137, 0.09, 16, 3, true, (Math.PI * 5) / 6, (Math.PI * 4) / 3), HAIR, { y: 0.15, x: -0.01, fade: [HAIR, SKIN, 0, 1] });
+  // Eyes: whites, with pupils that turn into a red glow when his powers are out
+  for (const z of [-0.045, 0.045]) {
+    b.box(head, 0.012, 0.02, 0.04, 0.128, 0.128, z, '#e8e4dc');
+    b.box(head, 0.012, 0.02, 0.016, 0.132, 0.128, z, '#ffffff', { glow: true });
+  }
   const armSpec = { y: 0.54, upper: 0.3, fore: 0.28, rShoulder: 0.075, rElbow: 0.065, rWrist: 0.055, sleeve: JACKET, hand: '#e0a088', handSize: 0.09 };
   const [armL, elbowL] = arm(b, torso, { ...armSpec, z: -0.27 });
   const [armR, elbowR] = arm(b, torso, { ...armSpec, z: 0.27 });
@@ -197,7 +258,7 @@ export function poseHero(m, p, t) {
   m.claws.visible = p.power === 'claws';
   m.whip.visible = p.power === 'whip' && !!atk;
   m.blade.visible = p.power === 'blade';
-  m.glow.color.set(p.anim === 'dev' || (atk && p.power !== 'fists') ? '#ff2050' : '#ffffff');
+  m.glow.color.set(p.anim === 'dev' || (atk && p.power !== 'fists') ? '#ff2050' : '#1a1210'); // dark pupils, or glowing red
 
   switch (p.anim) {
     case 'run':

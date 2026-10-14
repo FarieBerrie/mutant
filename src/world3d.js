@@ -102,6 +102,7 @@ export function buildWorld(level) {
     roofs.top(b, style === 'container' ? color : tinted('#ffffff', 0.7 + (b.tint ?? 1) * 0.3));
   }
   for (const [style, quads] of byStyle) group.add(new THREE.Mesh(quads.geometry(), facadeMaterial(facades[style], windowMaterials)));
+  group.add(buildingEdges(level));
   group.add(new THREE.Mesh(roofs.geometry(), new THREE.MeshLambertMaterial({ map: createRoof(), vertexColors: true })));
 
   // ---- detail geometry: building trim, cars, lamps, street furniture, arena buttresses
@@ -222,6 +223,29 @@ export function buildWorld(level) {
   if (crownMesh) group.add(crownMesh);
 
   return { group, gates, windowMaterials, groundMaterials, glowPoints };
+}
+
+/**
+ * Dark lines along every corner and roofline of the buildings, walls and container stacks, set a
+ * few centimetres out so they don't flicker against the faces. They make each block read crisply.
+ */
+function buildingEdges(level) {
+  const pts = [];
+  const e = 0.03;
+  for (const b of level.boxes) {
+    if (b.kind !== 'building' && b.kind !== 'container' && (b.kind !== 'wall' || b.gate)) continue;
+    const x0 = b.x0 - e;
+    const x1 = b.x1 + e;
+    const z0 = b.z0 - e;
+    const z1 = b.z1 + e;
+    const y1 = b.y1 + e;
+    // Four vertical corners and the rectangle round the roof
+    for (const [x, z] of [[x0, z0], [x1, z0], [x1, z1], [x0, z1]]) pts.push(x, b.y0, z, x, y1, z);
+    pts.push(x0, y1, z0, x1, y1, z0, x1, y1, z0, x1, y1, z1, x1, y1, z1, x0, y1, z1, x0, y1, z1, x0, y1, z0);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  return new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0x0a080e }));
 }
 
 function facadeMaterial({ map, glow }, windowMaterials) {

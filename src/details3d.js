@@ -75,8 +75,32 @@ export class Batch {
 
 const TRIM = { brick: '#cdb08a', concrete: '#c4c4b8', tan: '#e6d2a4', glass: '#5a7aa0', industrial: '#5a5e52', wall: '#4a4642' };
 
+/**
+ * Sills under and lintels over every window on the face of b that looks onto the avenue. The
+ * spacing matches the facade texture (textures.js): per 4 m bay, two windows at 0.63–1.75 m and
+ * 2.38–3.5 m along the wall; per 4 m storey, windows from 1 m to 3 m up.
+ */
+function windowFrames(solid, b, hex) {
+  const faceZ = b.side > 0 ? b.z0 : b.z1;
+  const out = b.side > 0 ? -1 : 1; // the face's outward direction in z
+  const len = b.x1 - b.x0;
+  // Distance along the face, measured from the corner the texture starts at
+  const xAt = (d) => (b.side > 0 ? b.x1 - d : b.x0 + d);
+  for (let base = 0; base + FLOOR <= b.y1 + 0.01; base += FLOOR) {
+    for (let bay = 0; bay * 4 < len; bay++) {
+      for (const centre of [1.1875, 2.9375]) {
+        const d = bay * 4 + centre;
+        if (d + 0.7 > len) continue;
+        const x = xAt(d);
+        solid.box(x - 0.68, x + 0.68, base + 0.86, base + 1, Math.min(faceZ, faceZ + out * 0.16), Math.max(faceZ, faceZ + out * 0.16), hex, { k: 0.95 });
+        solid.box(x - 0.62, x + 0.62, base + 3, base + 3.14, Math.min(faceZ, faceZ + out * 0.09), Math.max(faceZ, faceZ + out * 0.09), hex, { k: 0.8 });
+      }
+    }
+  }
+}
+
 /** Trim and rooftop clutter for one building. */
-function building(solid, glow, b, rng) {
+function building(solid, glow, b, rng, avenue) {
   const { x0, x1, z0, z1 } = b;
   const h = b.y1;
   const trim = TRIM[b.style] || '#888888';
@@ -90,6 +114,8 @@ function building(solid, glow, b, rng) {
     ring(h - 0.15, h + 0.02, 0.45, trim, 1.1);
     parapet(solid, b, h, 0.5, trim, 0.8);
     rooftop(solid, glow, b, h, rng);
+    // Front-row buildings get real sills and lintels on the side facing the street.
+    if (Math.min(Math.abs(b.z0), Math.abs(b.z1)) < avenue + 6) windowFrames(solid, b, trim);
   } else if (b.style === 'glass') {
     ring(0, 1.2, 0.1, '#3a4a60');
     // Vertical fins up every face
@@ -252,7 +278,7 @@ export function buildDetails(level) {
   const glows = [];
 
   for (const b of level.boxes) {
-    if (b.kind === 'building') building(solid, glow, b, rng);
+    if (b.kind === 'building') building(solid, glow, b, rng, level.avenue);
     else if (b.kind === 'car') glows.push(...car(solid, glow, b, rng.chance(0.5) ? 1 : -1));
     else if (b.kind === 'sidewalk') {
       // Kerb face toward the road
