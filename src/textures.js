@@ -308,6 +308,20 @@ export function createBlob() {
   return t;
 }
 
+/** A small round dot with a soft edge, for particles. */
+export function createDot() {
+  const t = texture(16, 16, (ctx) => {
+    const g = ctx.createRadialGradient(8, 8, 0, 8, 8, 8);
+    g.addColorStop(0, 'rgba(255,255,255,1)');
+    g.addColorStop(0.6, 'rgba(255,255,255,0.9)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 16, 16);
+  });
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  return t;
+}
+
 /** Soft glowing dot, for lamps, sparks and the moon's halo. */
 export function createGlow() {
   const t = texture(32, 32, (ctx) => {

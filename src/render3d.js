@@ -5,12 +5,43 @@ import * as THREE from 'three';
 import { HUD_H, HUD_W } from './config.js';
 import { isBoss } from './enemies.js';
 import { groundHeight } from './level.js';
-import { BUILDERS, buildHero, poseHero } from './models.js';
+import { angleDiff } from './math.js';
+import { BUILDERS, buildHero, poseHero, smoothPose } from './models.js';
 import { ATTACKS } from './player.js';
-import { createBlob, createGlow } from './textures.js';
+import { createBlob, createDot, createGlow } from './textures.js';
 import { buildWorld } from './world3d.js';
 
-const RENDER_HEIGHT = 270; // vertical resolution of the 3D frame, before it's scaled up
+const RENDER_HEIGHT = 360; // vertical resolution of the 3D frame, before it's scaled up
+const POSE_EASE = 22; // how fast limbs blend toward a new pose (per second)
+
+/**
+ * The game steps at a fixed 60 Hz; frames are drawn whenever the display wants one. Positions
+ * are blended between the last two steps (main.js records the previous one as _px, _py, _pz and
+ * _pyaw), so motion is smooth at any refresh rate.
+ */
+function blend(o, alpha) {
+  if (o._px === undefined) return { x: o.x, y: o.y, z: o.z, yaw: o.yaw ?? 0 };
+  return {
+    x: o._px + (o.x - o._px) * alpha,
+    y: o._py + (o.y - o._py) * alpha,
+    z: o._pz + (o.z - o._pz) * alpha,
+    yaw: o.yaw === undefined ? 0 : o._pyaw + angleDiff(o._pyaw, o.yaw) * alpha,
+  };
+}
+
+/** Saves where everything is before a game step, for blend(). */
+export function rememberPositions(game) {
+  const keep = (o) => {
+    o._px = o.x;
+    o._py = o.y;
+    o._pz = o.z;
+    o._pyaw = o.yaw;
+  };
+  keep(game.player);
+  for (const e of game.enemies) keep(e);
+  for (const pr of game.projectiles) keep(pr);
+  for (const pt of game.particles) keep(pt);
+}
 
 // sky: zenith, horizon; fog; hemisphere light: sky, ground; sun: colour, strength; windows glow.
 const THEMES = {
@@ -54,7 +85,7 @@ function themeAt(level, x) {
 }
 
 export function createRenderer(canvas) {
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
   renderer.setPixelRatio(1);
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(62, 16 / 9, 0.2, 320);
@@ -133,9 +164,12 @@ export function createRenderer(canvas) {
   shadows.frustumCulled = false;
   dynamic.add(shadows);
 
+  // Particles are soft round dots that shrink as they fade.
   const MAX_PARTICLES = 900;
-  const particles = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial(), MAX_PARTICLES);
-  particles.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(MAX_PARTICLES * 3), 3);
+  const particleGeo = new THREE.BufferGeometry();
+  particleGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(MAX_PARTICLES * 3), 3));
+  particleGeo.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(MAX_PARTICLES * 3), 3));
+  const particles = new THREE.Points(particleGeo, new THREE.PointsMaterial({ size: 0.42, map: createDot(), vertexColors: true, transparent: true, alphaTest: 0.05, depthWrite: false }));
   particles.frustumCulled = false;
   dynamic.add(particles);
 
@@ -214,6 +248,7 @@ export function createRenderer(canvas) {
 
   let world = null;
   let worldSeed = null;
+  let lastFrame = null;
   const dummy = new THREE.Object3D();
   const color = new THREE.Color();
 
@@ -315,25 +350,23 @@ export function createRenderer(canvas) {
   }
 
   function flashModel(m, on, strength = 0.55) {
-    for (const mat of m.materials) {
-      if (on) mat.emissive.setRGB(strength, strength, strength);
-      else if (mat.userData.glow) mat.emissive.copy(mat.userData.glow);
-      else mat.emissive.setRGB(0, 0, 0);
-    }
+    for (const mat of m.materials) mat.emissive.setScalar(on ? strength : 0);
   }
 
-  function updateCharacters(game, t) {
+  function updateCharacters(game, t, alpha, ease) {
     const level = game.level;
     let s = 0;
     const p = game.player;
+    const pp = blend(p, alpha);
     hero.root.visible = p.alive;
-    hero.root.position.set(p.x, p.y, p.z);
-    hero.root.rotation.y = -p.yaw;
+    hero.root.position.set(pp.x, pp.y, pp.z);
+    hero.root.rotation.y = -pp.yaw;
     poseHero(hero, p, t);
+    smoothPose(hero, ease);
     flashModel(hero, p.hurt > 10);
     const blink = p.invuln > 0 && !p.consume && p.dev === 0 && p.dash === 0 && Math.floor(t / 3) % 2;
     if (blink && p.alive) hero.root.visible = false;
-    if (p.alive) s = placeShadow(s, level, p, 1.2);
+    if (p.alive) s = placeShadow(s, level, pp, 1.2);
 
     const seen = new Set();
     for (const e of game.enemies) {
@@ -346,13 +379,15 @@ export function createRenderer(canvas) {
         dynamic.add(m.root);
       }
       m.root.visible = !(e.dead && Math.floor(t / 3) % 2);
-      m.root.position.set(e.x, e.y, e.z);
-      m.root.rotation.y = -e.yaw;
+      const ep = blend(e, alpha);
+      m.root.position.set(ep.x, ep.y, ep.z);
+      m.root.rotation.y = -ep.yaw;
       BUILDERS[e.type][1](m, e, t);
+      smoothPose(m, ease);
       const pulse = isBoss(e) && e.phase === 3 && Math.floor(t / 6) % 2 === 0;
       // A brief flash, softer on the big bosses, so rapid hits don't keep them white.
       flashModel(m, e.flash > 3 || pulse, isBoss(e) ? 0.25 : 0.55);
-      if (e.type !== 'heli') s = placeShadow(s, level, e, e.r * 3);
+      if (e.type !== 'heli') s = placeShadow(s, level, ep, e.r * 3);
     }
     for (const [e, m] of models) {
       if (!seen.has(e)) {
@@ -365,14 +400,15 @@ export function createRenderer(canvas) {
     shadows.instanceMatrix.needsUpdate = true;
   }
 
-  function updateProjectiles(game, t) {
+  function updateProjectiles(game, t, alpha) {
     for (const pool of pools.values()) {
       for (const obj of pool.items) obj.visible = false;
       pool.used = 0;
     }
     for (const pr of game.projectiles) {
       const obj = take(pr.kind);
-      obj.position.set(pr.x, pr.y, pr.z);
+      const at = blend(pr, alpha);
+      obj.position.set(at.x, at.y, at.z);
       if (pr.kind === 'bullet' || pr.kind === 'rocket') {
         obj.lookAt(pr.x + pr.vx, pr.y + pr.vy, pr.z + pr.vz);
         obj.rotateY(-Math.PI / 2);
@@ -394,26 +430,28 @@ export function createRenderer(canvas) {
     }
   }
 
-  function updateParticles(game) {
+  function updateParticles(game, alpha) {
+    const pos = particleGeo.attributes.position;
+    const col = particleGeo.attributes.color;
     let n = 0;
     for (const pt of game.particles) {
       if (n >= MAX_PARTICLES) break;
-      const life = Math.min(1, pt.life / 18);
-      dummy.position.set(pt.x, pt.y, pt.z);
-      dummy.rotation.set(0, 0, 0);
-      dummy.scale.setScalar(pt.size * (0.5 + life * 0.5));
-      dummy.updateMatrix();
-      particles.setMatrixAt(n, dummy.matrix);
-      particles.setColorAt(n, color.set(pt.color));
+      const at = blend(pt, alpha);
+      pos.setXYZ(n, at.x, at.y, at.z);
+      // Fade toward black as they die; bigger particles are brighter.
+      const k = Math.min(1, pt.life / 18) * Math.min(1, 0.5 + pt.size * 2);
+      color.set(pt.color).multiplyScalar(k);
+      col.setXYZ(n, color.r, color.g, color.b);
       n++;
     }
-    particles.count = n;
-    particles.instanceMatrix.needsUpdate = true;
-    if (particles.instanceColor) particles.instanceColor.needsUpdate = true;
+    particleGeo.setDrawRange(0, n);
+    pos.needsUpdate = true;
+    col.needsUpdate = true;
   }
 
-  function updateEffects(game, t) {
+  function updateEffects(game, t, alpha) {
     const p = game.player;
+    const pp = blend(p, alpha);
     // Slash trail for the blade and claws
     trail.visible = false;
     const atk = p.attack;
@@ -422,7 +460,7 @@ export function createRenderer(canvas) {
       if (atk.t >= def.from && atk.t <= def.to + 3) {
         trail.visible = true;
         trailMat.opacity = atk.t > def.to ? 0.6 * (1 - (atk.t - def.to) / 4) : 0.6;
-        trail.position.set(p.x, p.y + 1.2, p.z);
+        trail.position.set(pp.x, pp.y + 1.2, pp.z);
         const vertical = atk.power === 'claws' || atk.index === 1;
         trail.rotation.set(vertical ? 0 : -Math.PI / 2, -p.yaw, 0, 'YXZ');
         if (vertical) trail.rotation.set(0, -p.yaw, Math.PI / 2, 'YXZ');
@@ -433,7 +471,7 @@ export function createRenderer(canvas) {
     devBurst.visible = p.dev > 0 && p.dev <= 22;
     if (devBurst.visible) {
       const k = (22 - p.dev) / 22;
-      devBurst.position.set(p.x, p.y + 1, p.z);
+      devBurst.position.set(pp.x, pp.y + 1, pp.z);
       devBurst.scale.setScalar(1 + k * 13);
       devBurst.rotation.set(t * 0.05, t * 0.07, 0);
       devBurst.material.opacity = 0.9 * (1 - k);
@@ -477,8 +515,15 @@ export function createRenderer(canvas) {
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
     },
-    /** Draws a frame. view: { position, target } for the camera, in world space. */
-    render(game, view, t) {
+    /**
+     * Draws a frame. view: { position, target } for the camera, in world space. alpha (0..1) is
+     * how far the display is between the last game step and the next.
+     */
+    render(game, view, t, alpha = 1) {
+      const now = performance.now();
+      const dt = Math.min(0.1, (now - (lastFrame ?? now)) / 1000) || 1 / 60;
+      lastFrame = now;
+      const ease = 1 - Math.exp(-POSE_EASE * dt);
       setLevel(game.level);
       camera.position.set(view.position.x, view.position.y, view.position.z);
       camera.lookAt(view.target.x, view.target.y, view.target.z);
@@ -492,10 +537,10 @@ export function createRenderer(canvas) {
         if (gate) gate.visible = !a.wall.removed;
       }
       applyTheme(themeAt(game.level, game.player.x), t, camera.position);
-      updateCharacters(game, t);
-      updateProjectiles(game, t);
-      updateParticles(game);
-      updateEffects(game, t);
+      updateCharacters(game, t, alpha, ease);
+      updateProjectiles(game, t, alpha);
+      updateParticles(game, alpha);
+      updateEffects(game, t, alpha);
       renderer.render(scene, camera);
     },
     /** World point → HUD canvas coordinates, or null when behind the camera. */

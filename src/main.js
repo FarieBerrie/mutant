@@ -7,7 +7,7 @@ import { CX, dim, drawHud, drawLogo, drawMenu, drawPanel } from './hud.js';
 import { createInput } from './input.js';
 import { boxesNear, groundHeight } from './level.js';
 import { clamp, rayBox, turnToward } from './math.js';
-import { createRenderer } from './render3d.js';
+import { createRenderer, rememberPositions } from './render3d.js';
 
 const HIGH_SCORE_KEY = 'mutant64.highscore';
 const HUD_DETAIL = 2; // the HUD canvas has 2× the pixels of its 400×225 layout
@@ -108,7 +108,16 @@ function pause() {
 
 // ------------------------------------------------------------------- camera
 
-const cam = { yaw: 0, pitch: 0.3, dist: 7.5, idle: 0, position: { x: 0, y: 5, z: -8 }, target: { x: 0, y: 1.6, z: 0 }, ready: false };
+const cam = {
+  yaw: 0,
+  pitch: 0.3,
+  dist: 7.5,
+  idle: 0,
+  position: { x: 0, y: 5, z: -8 },
+  target: { x: 0, y: 1.6, z: 0 },
+  prev: null, // position and target at the previous step, for drawing in between
+  ready: false,
+};
 
 /** Third-person camera: you steer it; when you leave it alone it drifts in behind you. */
 function updateCamera(g, { orbit = false } = {}) {
@@ -151,6 +160,7 @@ function updateCamera(g, { orbit = false } = {}) {
   want.y = Math.max(want.y, groundHeight(g.level, want.x, want.z) + 0.4);
 
   const ease = cam.ready ? 0.3 : 1;
+  cam.prev = { position: { ...cam.position }, target: { ...cam.target } };
   for (const k of ['x', 'y', 'z']) {
     cam.position[k] += (want[k] - cam.position[k]) * ease;
     cam.target[k] += (target[k] - cam.target[k]) * (cam.ready ? 0.5 : 1);
@@ -165,6 +175,7 @@ function tick() {
   input.update();
   if (input.pressed('mute')) audio.toggleMute();
 
+  rememberPositions(screen === 'title' || screen === 'howto' ? demo : game);
   if (screen === 'title') {
     demoBot.update();
     demo.update();
@@ -307,9 +318,16 @@ function drawVictory() {
   if (game.modeT > 150 && Math.floor(t / 20) % 2) drawText(ctx, 'PRESS START', CX, 180, PAL.white, { align: 'center' });
 }
 
-function draw() {
+/** The camera between the last two steps. */
+function cameraAt(alpha) {
+  if (!cam.prev) return cam;
+  const mix = (a, b) => ({ x: a.x + (b.x - a.x) * alpha, y: a.y + (b.y - a.y) * alpha, z: a.z + (b.z - a.z) * alpha });
+  return { position: mix(cam.prev.position, cam.position), target: mix(cam.prev.target, cam.target) };
+}
+
+function draw(alpha = 1) {
   const shown = screen === 'title' || screen === 'howto' ? demo : game;
-  renderer.render(shown, cam, t);
+  renderer.render(shown, cameraAt(alpha), t, alpha);
   ctx.setTransform(HUD_DETAIL, 0, 0, HUD_DETAIL, 0, 0);
   ctx.clearRect(0, 0, HUD_W, HUD_H);
   if (screen === 'title') drawTitle();
@@ -345,11 +363,13 @@ document.addEventListener('visibilitychange', () => {
 startDemo();
 
 // ?shot=play:900&x=600 jumps straight into a bot-driven game and fast-forwards; handy for
-// screenshots and tuning. x moves the player first; yaw turns the camera (radians).
+// screenshots and tuning. x moves the player first; yaw and pitch turn the camera (radians) and
+// dist sets how far back it sits.
 const params = new URLSearchParams(location.search);
 const shot = params.get('shot');
 if (shot) {
   const [scene, frames] = shot.split(':');
+  if (params.has('dist')) cam.dist = Number(params.get('dist'));
   if (scene === 'play') {
     const bot = createBot();
     game = new Game({ input: bot });
@@ -363,6 +383,7 @@ if (shot) {
       bot.update();
       game.update();
       cam.yaw = Number(params.get('yaw') ?? 0);
+      cam.pitch = Number(params.get('pitch') ?? 0.3);
       updateCamera(game, { orbit: false });
     }
   } else {
@@ -384,7 +405,7 @@ if (shot) {
       tick();
       acc -= STEP * 1000;
     }
-    draw();
+    draw(acc / (STEP * 1000));
     requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);

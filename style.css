@@ -24,7 +24,7 @@ body {
   align-items: center;
 }
 
-/* The 3D view is rendered at low resolution and scaled up with hard pixels; the HUD sits on top. */
+/* The 3D view is rendered at a low resolution and scaled up; the HUD sits on top. */
 #view {
   position: relative;
   flex: none;
@@ -38,11 +38,12 @@ body {
   width: 100%;
   height: 100%;
   display: block;
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
 }
 
+/* The 3D frame scales up smoothly, like the N64's soft video; the HUD keeps hard pixels. */
 #hud {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
   pointer-events: none;
 }
 

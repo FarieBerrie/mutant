@@ -8,8 +8,9 @@ Everything is original and generated in code. The characters are built from boxe
 
 The game targets the look of the Nintendo 64 era of 3D games:
 
-- **Low resolution:** the 3D view renders 270 lines tall and is scaled up with hard pixels.
-- **Low-poly characters:** Maximus, soldiers, infected, Hunters, the gunship and both bosses are built from boxes, with jointed limbs animated for running, wall-running, gliding, dashing, attacks and consuming.
+- **Low resolution, soft picture:** the 3D view renders 360 lines tall with antialiasing and is scaled up smoothly, like the N64's soft video output. The HUD stays crisp pixel art.
+- **Low-poly characters:** Maximus, soldiers, infected, Hunters, the gunship and both bosses are built from boxes, tapered cylinders, cones and rounded shapes, with knees and elbows. Each limb is merged into one mesh, so a character costs only a handful of draw calls.
+- **Smooth motion:** the game simulates at a fixed 60 steps a second, and everything drawn (characters, projectiles, particles, the camera) is interpolated between steps, so movement is smooth on any refresh rate. Limbs blend between poses instead of snapping.
 - **Soft textures:** facades, roofs, the street, shipping containers, refinery pipework and hive flesh are painted on small canvases and filtered smoothly, the way the N64 did. Lit windows glow at night.
 - **Fog and blob shadows:** distance fog hides the draw distance, and every character casts a round shadow.
 - **Districts that blend:** each district has its own sky, fog colour, lighting and weather (rain, embers, falling ash, a lightning storm), and they blend as you cross from one to the next.
